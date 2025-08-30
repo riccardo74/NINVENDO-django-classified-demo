@@ -32,8 +32,16 @@ DATABASES = {
     'default': env.db(),
 }
 
+# Cache configuration for development
 CACHES = {
-    'default': env.cache()
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'default-cache',
+        'OPTIONS': {
+            'MAX_ENTRIES': 1000,
+            'CULL_FREQUENCY': 3,
+        }
+    }
 }
 
 # Local time zone for this installation. Choices can be found here:
