@@ -7,3 +7,4 @@ psycopg2-binary==2.9.10
 python-memcached==1.62
 social-auth-app-django==5.4.2
 whitenoise==6.8.2
+django-fsm==3.0.0
