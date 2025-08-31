@@ -172,7 +172,7 @@ LOGIN_REDIRECT_URL = '/'
 LOGIN_URL = '/login/'
 LOGOUT_REDIRECT_URL = '/'
 
-DCF_SITE_NAME = 'Django Classified Demo'
+DCF_SITE_NAME = 'NinVendo : a place for NinTendo lovers'
 
 # You need to obtain Facebook Keys
 # Check docs for more info here:
