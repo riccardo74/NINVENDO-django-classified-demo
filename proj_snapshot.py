@@ -1,53 +1,11 @@
-# Update the previously created snapshot_django.py to include Git history (last N commits)
-# The script will now accept --git-max N and produce both an embedded section in CONTEXT.md
-# and a standalone out/GIT_HISTORY.txt. It will handle missing git or non-repo directories gracefully.
+# snapshot_django.py — Create a concise CONTEXT.md of your Django project
+# (+ optional Git history), with targeted capture for 'trade' app, messaging,
+# and user/profile pieces needed for in-app chat. Tailored for your project
+# where the marketplace app is named 'trade' (not 'market').
 
-
-
-#updated_script = r
-
-
-"""
-snapshot_django.py — Create a concise CONTEXT.md of your Django project
-(+ optional Git history) to share with LLMs. It gathers key files, redacts
-secrets, and produces a compact project tree + selected code excerpts.
-
-USAGE
------
-    python snapshot_django.py
-    # or specify output dir and size limits
-    python snapshot_django.py --out out --max-lines 4000 --max-file-lines 300 --git-max 50
-
-RESULT
-------
-    ./out/CONTEXT.md
-    ./out/GIT_HISTORY.txt   (if git is available and repo exists)
-
-WHAT IT COLLECTS
-----------------
-- manage.py
-- requirements(.txt|.in|poetry.lock|pyproject.toml if Python-related)
-- runtime/deploy files: render.yaml, Procfile, Dockerfile
-- project settings & urls (any */settings.py, */urls.py)
-- app-level models.py, views.py, urls.py, forms.py, admin.py, serializers.py
-- templates/*.html (selected: auth, base, trade, registration, etc.)
-- README.* (root readme if present)
-- Git history (last N commits) if available
-
-EXCLUDES
---------
-- Secrets redaction via regex (SECRET_KEY, SOCIAL_AUTH_*, DATABASE_URL, EMAIL_*, etc.)
-- Folders: .git, .venv/venv, node_modules, __pycache__, static, media, migrations, .pytest_cache,
-           .idea, .vscode, build, dist
-
-LIMITS
-------
-- Max CONTEXT lines: --max-lines (default 4000)
-- Max lines per file excerpt: --max-file-lines (default 300)
-- Git history length: --git-max (default 50)
-"""
 from __future__ import annotations
 import os, re, sys, argparse, textwrap, pathlib, subprocess, shutil
+from typing import List
 
 # ---------- Configuration ----------
 
@@ -63,8 +21,8 @@ EXCLUDE_DIRS = {
     "migrations",
 }
 
-# File globs to consider (suffix-based checks)
-WANTED_SUFFIXES = {
+# Filenames to include anywhere
+WANTED_FILENAMES = {
     "manage.py",
     "requirements.txt", "requirements.in", "poetry.lock", "Pipfile", "Pipfile.lock",
     "pyproject.toml",
@@ -72,14 +30,29 @@ WANTED_SUFFIXES = {
     "README.md", "README.rst", "README.txt",
 }
 
-CODE_SUFFIXES = {".py", ".html", ".txt", ".yaml", ".yml", ".toml", ".lock", ""}
+# Suffixes we consider "code/text" worth embedding
+CODE_SUFFIXES = {
+    ".py", ".html", ".txt", ".yaml", ".yml", ".toml", ".lock",
+    ".js", ".ts", ".css"
+}
 
+# App-level code files we always want
+APP_CODE_FILES = {
+    "models.py", "views.py", "urls.py", "forms.py", "admin.py",
+    "serializers.py", "apps.py", "signals.py"
+}
+
+# App names we care most about for this task
+PRIMARY_APP_NAMES = {"trade"}  # your marketplace app
+MSG_APP_NAMES = {"messaging", "chat", "inbox"}
+USER_APP_NAMES = {"users", "accounts", "profiles"}
+
+# Template name hints (kept, but we also include entire /templates/trade/)
 TEMPLATE_KEYWORDS = (
     "login", "password_reset", "registration", "email_sent", "_base",
-    "base", "trade", "account", "signup", "logout", "profile"
+    "base", "trade", "account", "signup", "logout", "profile",
+    "conversation", "message", "chat", "inbox"
 )
-
-APP_CODE_FILES = {"models.py","views.py","urls.py","forms.py","admin.py","serializers.py","apps.py"}
 
 # ---------- Redaction ----------
 
@@ -98,54 +71,101 @@ def redact(text: str) -> str:
 
 # ---------- Helpers ----------
 
-def is_excluded_dir(path: pathlib.Path) -> bool:
-    return any(part in EXCLUDE_DIRS for part in path.parts)
+def is_excluded_dir(rel_path: pathlib.Path) -> bool:
+    return any(part in EXCLUDE_DIRS for part in rel_path.parts)
 
 def looks_like_project_settings(path: pathlib.Path) -> bool:
     return path.name == "settings.py"
 
 def looks_like_project_urls(path: pathlib.Path) -> bool:
-    return path.name == "urls.py" and path.parent.name not in {"trade", "tests"}
-
-def is_wanted_template(path: pathlib.Path) -> bool:
-    if path.suffix != ".html":
-        return False
-    name = path.name.lower()
-    if any(k in name for k in TEMPLATE_KEYWORDS):
-        return True
-    if name in {"base.html", "_base.html"}:
-        return True
-    return False
+    # keep project urls, but we also include app urls via APP_CODE_FILES
+    return path.name == "urls.py" and path.parent.name not in {"tests"}
 
 def is_wanted_misc(path: pathlib.Path) -> bool:
-    return path.name in WANTED_SUFFIXES
+    return path.name in WANTED_FILENAMES
+
+def is_code_file(path: pathlib.Path) -> bool:
+    return path.suffix in CODE_SUFFIXES or path.name in WANTED_FILENAMES
 
 def is_app_code_file(path: pathlib.Path) -> bool:
     return path.name in APP_CODE_FILES
 
+def is_template(path: pathlib.Path) -> bool:
+    return path.suffix == ".html"
+
+def template_is_interesting(path: pathlib.Path) -> bool:
+    """Include if name matches hints, or path is inside templates/trade/, templates/messaging|chat|inbox/."""
+    if not is_template(path):
+        return False
+    name = path.name.lower()
+    if any(k in name for k in TEMPLATE_KEYWORDS):
+        return True
+    parts = {p.lower() for p in path.parts}
+    # capture whole subtrees for these features
+    if "templates" in parts:
+        if "trade" in parts or "messaging" in parts or "chat" in parts or "inbox" in parts:
+            return True
+    return False
+
 def iter_files(root: pathlib.Path):
     for p in root.rglob("*"):
         if p.is_dir():
-            if is_excluded_dir(p.relative_to(root)):
-                pass
             continue
         yield p
 
-def collect_candidate_files(root: pathlib.Path):
-    cand = []
+def collect_candidate_files(root: pathlib.Path) -> List[pathlib.Path]:
+    cand: List[pathlib.Path] = []
+
+    # 1) Generic important files and project-level settings/urls
     for p in iter_files(root):
-        if is_excluded_dir(p.relative_to(root)):
+        rel = p.relative_to(root)
+        if is_excluded_dir(rel.parent):
+            continue
+        if p.name == "manage.py":
+            cand.append(p)
+            continue
+        if is_wanted_misc(p):
+            cand.append(p)
             continue
         if looks_like_project_settings(p) or looks_like_project_urls(p):
             cand.append(p)
-        elif is_app_code_file(p):
+            continue
+
+    # 2) All app code files everywhere (models/views/urls/forms/etc)
+    for p in iter_files(root):
+        rel = p.relative_to(root)
+        if is_excluded_dir(rel.parent):
+            continue
+        if is_app_code_file(p):
             cand.append(p)
-        elif is_wanted_template(p):
+
+    # 3) Templates of interest (heuristic-expanded)
+    for p in iter_files(root):
+        rel = p.relative_to(root)
+        if is_excluded_dir(rel.parent):
+            continue
+        if template_is_interesting(p):
             cand.append(p)
-        elif is_wanted_misc(p):
-            cand.append(p)
-        elif p.name == "manage.py":
-            cand.append(p)
+
+    # 4) PRIORITIZE/INCLUDE: trade, messaging/chat/inbox, users/accounts/profiles
+    important_app_roots = set()
+    for app_name in list(PRIMARY_APP_NAMES | MSG_APP_NAMES | USER_APP_NAMES):
+        for p in root.rglob(app_name):
+            if p.is_dir() and not is_excluded_dir(p.relative_to(root)):
+                important_app_roots.add(p)
+
+    # Add all primary code files and templates from those apps
+    for app_root in sorted(important_app_roots):
+        for p in app_root.rglob("*"):
+            if p.is_dir():
+                continue
+            rel = p.relative_to(root)
+            if is_excluded_dir(rel.parent):
+                continue
+            if p.name in APP_CODE_FILES or template_is_interesting(p):
+                cand.append(p)
+
+    # De-duplicate preserving order
     seen = set()
     ordered = []
     for f in cand:
@@ -155,20 +175,24 @@ def collect_candidate_files(root: pathlib.Path):
             ordered.append(f)
     return ordered
 
-def make_tree(root: pathlib.Path, max_depth: int = 3) -> str:
+def make_tree(root: pathlib.Path, max_depth: int = 4) -> str:
     lines = []
     prefix_stack = []
     def walk(dir_path: pathlib.Path, depth: int):
         if depth > max_depth:
             return
-        entries = [e for e in sorted(dir_path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())) if not (is_excluded_dir(e.relative_to(root)) or e.name.startswith("."))]
+        try:
+            entries = [e for e in sorted(dir_path.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
+                       if not (is_excluded_dir(e.relative_to(root)) or e.name.startswith("."))]
+        except Exception:
+            return
         for i, e in enumerate(entries):
             last = (i == len(entries) - 1)
             branch = "└── " if last else "├── "
             prefix = "".join(prefix_stack) + branch
             if e.is_dir():
                 lines.append(f"{prefix}{e.name}/")
-                prefix_stack.append(("    " if last else "│   "))
+                prefix_stack.append("    " if last else "│   ")
                 walk(e, depth + 1)
                 prefix_stack.pop()
             else:
@@ -198,12 +222,14 @@ def collect_git_history(root: pathlib.Path, git_max: int) -> str:
     if shutil.which("git") is None:
         return ""
     try:
-        # Ensure we're inside a git repo
-        subprocess.check_output(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"], stderr=subprocess.STDOUT)
+        subprocess.check_output(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+                                stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError:
         return ""
-    # Pretty log: hash, date, author, subject (no merge bodies)
-    cmd = ["git", "-C", str(root), "log", f"-n{git_max}", "--pretty=format:%h | %ad | %an | %s", "--date=short"]
+    cmd = ["git", "-C", str(root), "log",
+           f"-n{git_max}",
+           "--pretty=format:%h | %ad | %an | %s",
+           "--date=short"]
     try:
         out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
     except subprocess.CalledProcessError:
@@ -229,7 +255,6 @@ def main():
 
     # Assemble document
     doc_parts = []
-
     doc_parts.append("# Project Snapshot (Django)\n")
     doc_parts.append(f"- Root: `{root}`")
     doc_parts.append(f"- Generated by: `snapshot_django.py`")
@@ -237,30 +262,41 @@ def main():
 
     # Tree
     doc_parts.append("## Project Tree (compact)\n")
-    doc_parts.append("```\n" + make_tree(root, max_depth=3) + "\n```\n")
+    doc_parts.append("```\n" + make_tree(root, max_depth=4) + "\n```\n")
     doc_parts.append("\n---\n")
 
     # Git history
     if args.git_max and args.git_max > 0:
         gh = collect_git_history(root, args.git_max)
         if gh:
-            # also write standalone file
             (out_dir / "GIT_HISTORY.txt").write_text(gh + "\n", encoding="utf-8")
             doc_parts.append(f"## Git History (last {args.git_max} commits)\n")
             doc_parts.append("```\n" + gh + "\n```\n")
             doc_parts.append("\n---\n")
 
-    # Files
+    # Files (redacted excerpts)
     doc_parts.append("## Key Files (redacted excerpts)\n")
     for p in files:
         rp = p.relative_to(root).as_posix()
         doc_parts.append(f"\n### {rp}\n")
         code = read_file_excerpt(p, args.max_file_lines)
         fence = "```"
-        lang = "python" if p.suffix == ".py" else ("html" if p.suffix == ".html" else ("yaml" if p.suffix in {".yaml", ".yml"} else ""))
+        lang = ""
+        if p.suffix == ".py":
+            lang = "python"
+        elif p.suffix == ".html":
+            lang = "html"
+        elif p.suffix in {".yaml", ".yml"}:
+            lang = "yaml"
+        elif p.suffix in {".js"}:
+            lang = "javascript"
+        elif p.suffix in {".ts"}:
+            lang = "typescript"
+        elif p.suffix in {".css"}:
+            lang = "css"
         doc_parts.append(f"{fence}{lang}\n{code}\n{fence}\n")
 
-    # Cut down to max total lines
+    # Trim to max total lines
     full_text = "\n".join(doc_parts)
     lines = full_text.splitlines()
     if len(lines) > args.max_lines:
@@ -275,4 +311,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

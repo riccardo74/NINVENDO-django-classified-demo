@@ -1,5 +1,5 @@
 {% extends "django_classified/_base.html" %}
-{% load i18n %}
+{% load i18n widget_tweaks %}
 
 {% block title %}Dettagli Scambio #{{ trade.pk }}{% endblock %}
 
@@ -72,7 +72,7 @@
         </div>
     </div>
 
-    <!-- Messaggio -->
+    <!-- Messaggio Iniziale -->
     {% if trade.message %}
     <div class="row mb-4">
         <div class="col-md-12">
@@ -88,7 +88,7 @@
     </div>
     {% endif %}
 
-    <!-- Azioni -->
+    <!-- Azioni Scambio Pendente -->
     {% if trade.state == 'sent' %}
         <div class="row mb-4">
             <div class="col-md-12">
@@ -126,24 +126,196 @@
                 </div>
             </div>
         </div>
+
+    <!-- SEZIONE SCAMBIO ACCETTATO - COMUNICAZIONE INTERNA -->
     {% elif trade.state == 'accepted' %}
         <div class="row mb-4">
             <div class="col-md-12">
-                <div class="alert alert-success text-center">
+                <div class="alert alert-success">
                     <h4>✅ Scambio Accettato!</h4>
-                    <p>Contattate tra voi per organizzare lo scambio fisico.</p>
-                    <form method="post" action="{% url 'trade:action' trade.pk 'complete' %}" style="display:inline;">
-                        {% csrf_token %}
-                        <button type="submit" class="btn btn-primary btn-lg"
-                                onclick="return confirm('🎉 Confermare che lo scambio è avvenuto?')">
-                            🎉 Scambio Completato
-                        </button>
-                    </form>
+                    <p>Organizzate insieme il vostro scambio utilizzando la messaggistica qui sotto oppure i contatti diretti.</p>
                 </div>
             </div>
         </div>
+
+        <!-- Informazioni di Contatto -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card border-primary">
+                    <div class="card-header bg-primary text-white">
+                        <h5>👤 {{ trade.from_user.username }} (Offerente)</h5>
+                    </div>
+                    <div class="card-body">
+                        {% if trade.from_user.trade_profile_extended %}
+                            {% if trade.from_user.trade_profile_extended.phone_number and trade.from_user.trade_profile_extended.show_phone_in_trades %}
+                                <p><strong>📞 Telefono:</strong> 
+                                    <a href="tel:{{ trade.from_user.trade_profile_extended.phone_number }}">
+                                        {{ trade.from_user.trade_profile_extended.phone_number }}
+                                    </a>
+                                </p>
+                            {% else %}
+                                <p class="text-muted">📞 Telefono: 
+                                    {% if not trade.from_user.trade_profile_extended.phone_number %}
+                                        Non impostato
+                                    {% else %}
+                                        Nascosto dall'utente
+                                    {% endif %}
+                                </p>
+                            {% endif %}
+                            
+                            {% if trade.from_user.trade_profile_extended.location %}
+                                <p><strong>📍 Zona:</strong> {{ trade.from_user.trade_profile_extended.location }}</p>
+                            {% else %}
+                                <p class="text-muted">📍 Zona: Non impostata</p>
+                            {% endif %}
+                        {% else %}
+                            <p class="text-muted">❌ Profilo non trovato</p>
+                        {% endif %}
+                        
+                        {% if trade.from_user.email %}
+                            <p><strong>✉️ Email:</strong> {{ trade.from_user.email }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card border-success">
+                    <div class="card-header bg-success text-white">
+                        <h5>👤 {{ trade.to_user.username }} (Ricevente)</h5>
+                    </div>
+                    <div class="card-body">
+                        {% if trade.to_user.trade_profile_extended %}
+                            {% if trade.to_user.trade_profile_extended.phone_number and trade.to_user.trade_profile_extended.show_phone_in_trades %}
+                                <p><strong>📞 Telefono:</strong> 
+                                    <a href="tel:{{ trade.to_user.trade_profile_extended.phone_number }}">
+                                        {{ trade.to_user.trade_profile_extended.phone_number }}
+                                    </a>
+                                </p>
+                            {% else %}
+                                <p class="text-muted">📞 Telefono: 
+                                    {% if not trade.to_user.trade_profile_extended.phone_number %}
+                                        Non impostato
+                                    {% else %}
+                                        Nascosto dall'utente
+                                    {% endif %}
+                                </p>
+                            {% endif %}
+                            
+                            {% if trade.to_user.trade_profile_extended.location %}
+                                <p><strong>📍 Zona:</strong> {{ trade.to_user.trade_profile_extended.location }}</p>
+                            {% else %}
+                                <p class="text-muted">📍 Zona: Non impostata</p>
+                            {% endif %}
+                        {% else %}
+                            <p class="text-muted">❌ Profilo non trovato</p>
+                        {% endif %}
+                        
+                        {% if trade.to_user.email %}
+                            <p><strong>✉️ Email:</strong> {{ trade.to_user.email }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Messaggistica Interna -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h5>💬 Messaggistica Interna</h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Cronologia Messaggi -->
+                        {% if trade_messages %}
+                            <div class="messages-history mb-3" style="max-height: 300px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; background-color: #f8f9fa;">
+                                {% for msg in trade_messages %}
+                                    <div class="message mb-2 {% if msg.sender == user %}text-right{% endif %}">
+                                        <div class="message-bubble {% if msg.sender == user %}alert-primary{% else %}alert-light{% endif %} alert py-2 px-3" 
+                                             style="display: inline-block; max-width: 70%; text-align: left;">
+                                            <small class="text-muted">
+                                                <strong>{{ msg.sender.username }}</strong> - {{ msg.created_at|date:"d/m/Y H:i" }}
+                                            </small>
+                                            <div>{{ msg.message|linebreaks }}</div>
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <p class="text-muted text-center">Nessun messaggio ancora. Inizia la conversazione qui sotto!</p>
+                        {% endif %}
+
+                        <!-- Form Nuovo Messaggio -->
+                        {% if message_form %}
+                            <form method="post" action="{% url 'trade:send_message' trade.pk %}">
+                                {% csrf_token %}
+                                <div class="form-group">
+                                    <label for="id_message">Scrivi un messaggio:</label>
+                                    {{ message_form.message|add_class:"form-control" }}
+                                </div>
+                                <button type="submit" class="btn btn-info btn-block">📨 Invia Messaggio</button>
+                            </form>
+                        {% else %}
+                            <div class="alert alert-warning">
+                                Form messaggi non disponibile
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Azione Completa Scambio -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card border-warning">
+                    <div class="card-body text-center">
+                        <h5>Scambio Avvenuto?</h5>
+                        <p class="text-muted">Una volta completato lo scambio fisico, confermate qui sotto:</p>
+                        <form method="post" action="{% url 'trade:action' trade.pk 'complete' %}" style="display:inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-primary btn-lg"
+                                    onclick="return confirm('🎉 Confermare che lo scambio è avvenuto?')">
+                                🎉 Scambio Completato
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    <!-- Scambio Completato - Feedback -->
     {% elif trade.state == 'completed' %}
-        <!-- Feedback Section -->
+        <!-- Messaggistica anche per scambi completati -->
+        {% if trade_messages %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header bg-secondary text-white">
+                        <h5>💬 Cronologia Messaggi</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="messages-history" style="max-height: 200px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; background-color: #f8f9fa;">
+                            {% for msg in trade_messages %}
+                                <div class="message mb-2 {% if msg.sender == user %}text-right{% endif %}">
+                                    <div class="message-bubble {% if msg.sender == user %}alert-primary{% else %}alert-light{% endif %} alert py-2 px-3" 
+                                         style="display: inline-block; max-width: 70%; text-align: left;">
+                                        <small class="text-muted">
+                                            <strong>{{ msg.sender.username }}</strong> - {{ msg.created_at|date:"d/m/Y H:i" }}
+                                        </small>
+                                        <div>{{ msg.message|linebreaks }}</div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Sezione Feedback -->
         {% if feedback_form %}
         <div class="row mb-4">
             <div class="col-md-12">
@@ -186,6 +358,21 @@
         {% else %}
             <a href="{% url 'trade:sent' %}" class="btn btn-secondary">← Torna agli Scambi Inviati</a>
         {% endif %}
+        
+        <a href="{% url 'trade:profile' %}" class="btn btn-outline-info">
+            📝 Gestisci il Profilo
+        </a>
     </div>
 </div>
+
+<!-- Script per auto-scroll della chat -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const messagesHistory = document.querySelector('.messages-history');
+    if (messagesHistory) {
+        messagesHistory.scrollTop = messagesHistory.scrollHeight;
+    }
+});
+</script>
+
 {% endblock %}

@@ -16,8 +16,10 @@ NINVENDO-django-classified-demo/
 │   │   └── Types.json
 │   ├── management/
 │   │   └── commands/
+│   │       └── setup_project.py
 │   ├── templates/
 │   │   └── demo/
+│   │       └── login.html
 │   ├── __init__.py
 │   └── tests.py
 ├── out/
@@ -49,11 +51,20 @@ NINVENDO-django-classified-demo/
 │   ├── registration/
 │   │   ├── registration_complete.html
 │   │   └── registration_form.html
+│   ├── trade/
+│   │   ├── detail.html
+│   │   ├── inbox.html
+│   │   ├── models.py
+│   │   ├── propose.html
+│   │   ├── sent.html
+│   │   └── views.py
 │   └── base.html
 ├── trade/
 │   ├── __init__.py
 │   ├── admin.py
 │   ├── apps.py
+│   ├── detail.html
+│   ├── forms.py
 │   ├── list.html
 │   ├── models.py
 │   ├── propose.html
@@ -63,7 +74,6 @@ NINVENDO-django-classified-demo/
 ├── __init__.py
 ├── app.json
 ├── customize_templates.py
-├── db.sqlite
 ├── db.sqlite3
 ├── fix_templates.py
 ├── LICENSE
@@ -85,6 +95,7 @@ NINVENDO-django-classified-demo/
 ## Git History (last 50 commits)
 
 ```
+1adefaf | 2025-09-01 | riccardo74 | Add project snapshot and trade module integration
 1c788d0 | 2025-08-31 | riccardo74 | Move registration templates and add base.html bridge
 eff7548 | 2025-08-31 | riccardo74 | Add trade (barter) module with user proposals
 1f7483b | 2025-08-31 | riccardo74 | Add NINVENDO branding and dynamic site config support
@@ -134,7 +145,6 @@ d73b732 | 2020-04-01 | Sergey Lyapustin | Merge pull request #96 from slyapustin
 1a02004 | 2020-03-04 | Sergey Lyapustin | Merge pull request #95 from slyapustin/pyup-update-django-3.0.3-to-3.0.4
 2842e25 | 2020-03-04 | pyup-bot | Update django from 3.0.3 to 3.0.4
 2c1e571 | 2020-03-04 | Sergey Lyapustin | Update README.md
-079afd6 | 2020-02-23 | Sergey Lyapustin | Removed email/password auth as it required a bit more work in order to make it secure.
 ```
 
 
@@ -201,7 +211,8 @@ Create `.env ` file with your local settings (use `.env.example` as an example).
 ### requirements.txt
 
 ```
-boto3==1.35.92  # pyup: ignore
+
+boto3==1.35.92 
 django-classified==1.1.1
 django-environ==0.11.2
 django==5.1.8
@@ -211,38 +222,15 @@ python-memcached==1.62
 social-auth-app-django==5.4.2
 whitenoise==6.8.2
 django-fsm==3.0.0
-```
 
 
-### demo/templates/demo/login.html
+django-crispy-forms==2.1
+crispy-bootstrap4==2024.1
+django-widget-tweaks==1.5.0
+django-extensions==3.2.3
 
-```html
-{% extends 'django_classified/_base.html' %}
 
-{% load i18n %}
-
-{% block title %}{% trans "Login" %}{% endblock title %}
-
-{% block body %}
-
-  <div class="row">
-    <div class="col-lg-12">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h4 class="modal-title">{% trans "Login" %}</h4>
-          </div>
-          <div class="modal-body">
-            <ul>
-              <li><a href="{% url "social:begin" "facebook" %}">Facebook</a></li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-{% endblock %}
+django-notifications-hq==1.8.0  
 ```
 
 
@@ -422,11 +410,24 @@ INSTALLED_APPS = [
     'django_classified',
     'social_django',
 
+    # ⭐ MODULI ESSENZIALI PER BARATTO
+    'crispy_forms',         # django-crispy-forms
+    'crispy_bootstrap4',    # crispy bootstrap4 template pack
+    'widget_tweaks',        # django-widget-tweaks
+    'django_extensions',    # utilities per sviluppo
+
     'demo',
     'registration',  
-
     "trade"
 ]
+
+# ⭐ CONFIGURAZIONI CRISPY FORMS
+CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap4"
+CRISPY_TEMPLATE_PACK = "bootstrap4"
+
+# Email per notifiche (già presente, assicuriamoci sia configurato)
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # development
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'  # production
 
 ACCOUNT_ACTIVATION_DAYS = 7  # per backend 'default' (con email)
 
@@ -539,6 +540,1644 @@ urlpatterns = [
 ]
 
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+```
+
+
+### trade/urls.py
+
+```python
+from django.urls import path
+from . import views
+
+app_name = "trade"
+
+urlpatterns = [
+    # Liste scambi
+    path("inbox/", views.InboxTradesView.as_view(), name="inbox"),
+    path("sent/", views.SentTradesView.as_view(), name="sent"),
+    
+    # Statistiche utente (deve essere prima di <int:pk>/)
+    path("user/<str:username>/stats/", views.UserTradeStatsView.as_view(), name="user_stats"),
+    
+    # Dettaglio e proposta
+    path("propose/<int:item_id>/", views.ProposeTradeView.as_view(), name="propose"),
+    
+    # Feedback e messaggi (DEVONO essere prima di <str:action> per evitare conflitti)
+    path("<int:pk>/feedback/", views.SubmitFeedbackView.as_view(), name="feedback"),
+    path("<int:pk>/message/", views.SendTradeMessageView.as_view(), name="send_message"),
+    
+    # Azioni sui scambi (pattern generico, deve essere dopo quelli specifici)
+    path("<int:pk>/<str:action>/", views.TradeActionView.as_view(), name="action"),
+    
+    # Dettaglio (pattern generico, deve essere ultimo)
+    path("<int:pk>/", views.TradeDetailView.as_view(), name="detail"),
+]
+```
+
+
+### templates/trade/models.py
+
+```python
+from django.conf import settings
+from django.db import models
+from django.urls import reverse
+from django.utils import timezone
+from datetime import timedelta
+from django_fsm import FSMField, transition
+from django.core.exceptions import ValidationError
+
+# Logging per tracciare azioni
+import logging
+logger = logging.getLogger(__name__)
+
+# NB: il modello degli annunci del pacchetto django_classified si chiama "Item"
+from django_classified.models import Item
+
+class TradeProposal(models.Model):
+    STATE_SENT = "sent"
+    STATE_ACCEPTED = "accepted"
+    STATE_DECLINED = "declined"
+    STATE_CANCELLED = "cancelled"
+    STATE_COMPLETED = "completed"
+
+    STATE_CHOICES = [
+        (STATE_SENT, "Inviata"),
+        (STATE_ACCEPTED, "Accettata"),
+        (STATE_DECLINED, "Rifiutata"),
+        (STATE_CANCELLED, "Annullata"),
+        (STATE_COMPLETED, "Completata"),
+    ]
+
+    from_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="proposals_sent"
+    )
+    to_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="proposals_received"
+    )
+
+    offer_item = models.ForeignKey(
+        Item, on_delete=models.PROTECT, related_name="trade_offers"
+    )  # annuncio dell'offerente
+    want_item = models.ForeignKey(
+        Item, on_delete=models.PROTECT, related_name="trade_targets"
+    )  # annuncio del destinatario
+
+    message = models.TextField(blank=True, help_text="Messaggio opzionale per la proposta")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # NUOVI CAMPI
+    expires_at = models.DateTimeField(null=True, blank=True, help_text="Scadenza automatica proposta")
+    is_counter_offer = models.BooleanField(default=False)
+    parent_proposal = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE)
+
+    state = FSMField(default=STATE_SENT, choices=STATE_CHOICES, protected=True)
+
+    class Meta:
+        constraints = [
+            # Non puoi proporre uno scambio a te stesso
+            models.CheckConstraint(
+                check=~models.Q(from_user=models.F("to_user")), name="tp_users_distinct"
+            ),
+            # Non puoi scambiare lo stesso annuncio con se stesso
+            models.CheckConstraint(
+                check=~models.Q(offer_item=models.F("want_item")), name="tp_items_distinct"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["to_user", "state"]),
+            models.Index(fields=["from_user", "state"]),
+            models.Index(fields=["created_at"]),
+            models.Index(fields=["expires_at"]),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.from_user} → {self.to_user} | {self.offer_item.title} ↔ {self.want_item.title} [{self.get_state_display()}]"
+
+    def save(self, *args, **kwargs):
+        # Auto-imposta scadenza a 7 giorni se non specificata
+        if not self.expires_at and self.state == self.STATE_SENT:
+            self.expires_at = timezone.now() + timedelta(days=7)
+        super().save(*args, **kwargs)
+        
+        # GESTIONE PROPOSTE MULTIPLE: Se accetto una proposta, rifiuto automaticamente le altre
+        if self.state == self.STATE_ACCEPTED and self.pk:
+            print(f"🔥 SAVE: Stato è ACCEPTED, chiamando cancel_competing_proposals()")
+            self.cancel_competing_proposals()
+
+    def cancel_competing_proposals(self):
+        """
+        Quando una proposta viene accettata, annulla automaticamente 
+        tutte le altre proposte pendenti per gli stessi annunci
+        """
+        print(f"🔥 CANCEL_COMPETING: Cercando proposte concorrenti")
+        
+        # Trova proposte concorrenti per l'annuncio offerto
+        competing_for_offer = TradeProposal.objects.filter(
+            want_item=self.offer_item,
+            state=self.STATE_SENT
+        ).exclude(pk=self.pk)
+        
+        # Trova proposte concorrenti per l'annuncio richiesto
+        competing_for_want = TradeProposal.objects.filter(
+            want_item=self.want_item,
+            state=self.STATE_SENT
+        ).exclude(pk=self.pk)
+        
+        # Annulla tutte le proposte concorrenti
+        all_competing = competing_for_offer.union(competing_for_want)
+        
+        print(f"🔥 CANCEL_COMPETING: Trovate {all_competing.count()} proposte da annullare")
+        
+        for proposal in all_competing:
+            proposal.state = self.STATE_CANCELLED
+            proposal.save(update_fields=['state'])
+            logger.info(f"Trade {proposal.id}: Automaticamente annullata per conflitto con Trade {self.id}")
+            print(f"🔥 CANCEL_COMPETING: Annullata proposta {proposal.id}")
+
+    def get_absolute_url(self):
+        return reverse('trade:detail', kwargs={'pk': self.pk})
+    
+    def is_expired(self):
+        """Controlla se la proposta è scaduta"""
+        if not self.expires_at:
+            return False
+        return timezone.now() > self.expires_at and self.state == self.STATE_SENT
+    
+    def can_user_act(self, user):
+        """Verifica se l'utente può agire su questa proposta"""
+        return user in [self.from_user, self.to_user]
+    
+    def can_accept(self, user):
+        """Solo il destinatario può accettare"""
+        return user == self.to_user and self.state == self.STATE_SENT and not self.is_expired()
+    
+    def can_decline(self, user):
+        """Solo il destinatario può rifiutare"""
+        return user == self.to_user and self.state == self.STATE_SENT
+    
+    def can_cancel(self, user):
+        """Entrambi possono annullare"""
+        return user in [self.from_user, self.to_user] and self.state in [self.STATE_SENT, self.STATE_ACCEPTED]
+    
+    def can_complete(self, user):
+        """Entrambi possono completare se accettata"""
+        return user in [self.from_user, self.to_user] and self.state == self.STATE_ACCEPTED
+
+    # TRANSIZIONI FSM CON DEBUG E GESTIONE AUTOMATICA DEGLI ITEM
+    @transition(field=state, source=STATE_SENT, target=STATE_ACCEPTED)
+    def accept(self):
+        print(f"🔥🔥🔥 ACCEPT CHIAMATO! Trade {self.id} 🔥🔥🔥")
+        
+        try:
+            # Log dell'azione
+            logger.info(f"Trade {self.id}: {self.to_user} ha accettato proposta da {self.from_user}")
+            print(f"🔥 Log scritto per Trade {self.id}")
+            
+            # Refresh degli oggetti dal database per sicurezza
+            self.offer_item.refresh_from_db()
+            self.want_item.refresh_from_db()
+            
+            print(f"🔥 PRIMA della modifica:")
+            print(f"   - offer_item({self.offer_item.id}).is_active = {self.offer_item.is_active}")
+            print(f"   - want_item({self.want_item.id}).is_active = {self.want_item.is_active}")
+            
+            # DISATTIVA GLI ANNUNCI COINVOLTI (RISERVATI)
+            self.offer_item.is_active = False
+            saved_offer = self.offer_item.save(update_fields=['is_active'])
+            print(f"🔥 offer_item.save() completato. Risultato: {saved_offer}")
+            
+            self.want_item.is_active = False  
+            saved_want = self.want_item.save(update_fields=['is_active'])
+            print(f"🔥 want_item.save() completato. Risultato: {saved_want}")
+            
+            # Verifica che le modifiche siano state applicate
+            self.offer_item.refresh_from_db()
+            self.want_item.refresh_from_db()
+            
+            print(f"🔥 DOPO la modifica (refresh dal DB):")
+            print(f"   - offer_item({self.offer_item.id}).is_active = {self.offer_item.is_active}")
+            print(f"   - want_item({self.want_item.id}).is_active = {self.want_item.is_active}")
+            
+            logger.info(f"Trade {self.id}: Annunci {self.offer_item.id} e {self.want_item.id} disattivati (riservati)")
+            print(f"🔥 ACCEPT completato con successo per Trade {self.id}")
+            
+        except Exception as e:
+            print(f"🔥🔥🔥 ERRORE CRITICO in accept(): {e} 🔥🔥🔥")
+            print(f"🔥 Tipo errore: {type(e).__name__}")
+            import traceback
+            print(f"🔥 Traceback: {traceback.format_exc()}")
+            logger.error(f"ERRORE in Trade.accept(): {e}")
+            raise
+
+    @transition(field=state, source=STATE_SENT, target=STATE_DECLINED)
+    def decline(self):
+        print(f"🔥 DECLINE chiamato per Trade {self.id}")
+        logger.info(f"Trade {self.id}: {self.to_user} ha rifiutato proposta da {self.from_user}")
+        # Gli annunci rimangono attivi
+        print(f"🔥 DECLINE completato per Trade {self.id}")
+
+    @transition(field=state, source=[STATE_SENT, STATE_ACCEPTED], target=STATE_CANCELLED)
+    def cancel(self):
+        print(f"🔥 CANCEL chiamato per Trade {self.id}, stato attuale: {self.state}")
+        logger.info(f"Trade {self.id}: Proposta annullata")
+        
+        try:
+            # RIATTIVA GLI ANNUNCI SE ERANO STATI DISATTIVATI
+            if self.state == self.STATE_ACCEPTED:
+                print(f"🔥 Stato è ACCEPTED, riattivando annunci")
+                
+                self.offer_item.refresh_from_db()
+                self.want_item.refresh_from_db()
+                
+                print(f"🔥 PRIMA del cancel (is_active): offer={self.offer_item.is_active}, want={self.want_item.is_active}")
+                
+                # Solo se erano stati disattivati per questo scambio
+                self.offer_item.is_active = True
+                self.offer_item.save(update_fields=['is_active'])
+                
+                self.want_item.is_active = True
+                self.want_item.save(update_fields=['is_active'])
+                
+                self.offer_item.refresh_from_db()
+                self.want_item.refresh_from_db()
+                
+                print(f"🔥 DOPO il cancel (is_active): offer={self.offer_item.is_active}, want={self.want_item.is_active}")
+                
+                logger.info(f"Trade {self.id}: Annunci {self.offer_item.id} e {self.want_item.id} riattivati")
+            else:
+                print(f"🔥 Stato non è ACCEPTED, annunci non riattivati")
+                
+        except Exception as e:
+            print(f"🔥🔥🔥 ERRORE in cancel(): {e} 🔥🔥🔥")
+            logger.error(f"ERRORE in Trade.cancel(): {e}")
+            raise
+
+    @transition(field=state, source=STATE_ACCEPTED, target=STATE_COMPLETED)
+    def complete(self):
+        print(f"🔥 COMPLETE chiamato per Trade {self.id}")
+        logger.info(f"Trade {self.id}: Scambio completato tra {self.from_user} e {self.to_user}")
+        
+        # GLI ANNUNCI RIMANGONO DISATTIVATI (SCAMBIATI DEFINITIVAMENTE)
+        print(f"🔥 Annunci rimangono disattivati (scambio completato)")
+        
+        # Aggiorna statistiche utenti
+        try:
+            self.from_user.trade_profile.update_stats()
+            self.to_user.trade_profile.update_stats()
+            print(f"🔥 Statistiche aggiornate per entrambi gli utenti")
+        except UserTradeProfile.DoesNotExist:
+            print(f"🔥 UserTradeProfile non esiste, saltando aggiornamento statistiche")
+            pass
+        
+        print(f"🔥 COMPLETE completato per Trade {self.id}")
+
+
+class TradeFeedback(models.Model):
+    """Sistema di rating post-scambio"""
+    trade = models.ForeignKey(TradeProposal, on_delete=models.CASCADE, related_name="feedbacks")
+    rater = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="feedbacks_given")
+    ratee = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="feedbacks_received")
+    
+    rating = models.PositiveSmallIntegerField(
+        choices=[(i, f"{i} ⭐") for i in range(1, 6)],
+        help_text="Valutazione da 1 a 5 stelle"
+    )
+    comment = models.TextField(blank=True, max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = [('trade', 'rater')]  # Un solo feedback per utente per scambio
+        indexes = [
+            models.Index(fields=["ratee", "rating"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.rater} → {self.ratee} | {self.rating}⭐ (Scambio #{self.trade.id})"
+
+    def clean(self):
+        # Validazione: puoi votare solo se hai partecipato allo scambio
+        if self.rater not in [self.trade.from_user, self.trade.to_user]:
+            raise ValidationError("Puoi votare solo negli scambi a cui hai partecipato.")
+        
+        # Non puoi votare te stesso
+        if self.rater == self.ratee:
+            raise ValidationError("Non puoi votare te stesso.")
+        
+        # Scambio deve essere completato
+        if self.trade.state != TradeProposal.STATE_COMPLETED:
+            raise ValidationError("Puoi votare solo scambi completati.")
+
+
+# MODELLO PER PROFILO UTENTE ESTESO
+class UserTradeProfile(models.Model):
+    """Statistiche e profilo trading dell'utente"""
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='trade_profile')
+    
+    # Statistiche
+    total_trades_completed = models.PositiveIntegerField(default=0)
+
+<<TRUNCATED: showing first 300 lines>>
+```
+
+
+### templates/trade/views.py
+
+```python
+from django.shortcuts import render, get_object_or_404, redirect
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.decorators import login_required
+from django.contrib import messages
+from django.http import HttpResponseForbidden, JsonResponse
+from django.views.generic import ListView, DetailView, CreateView
+from django.views import View
+from django.db.models import Q, Count, Avg
+from django.core.paginator import Paginator
+from django.utils.decorators import method_decorator
+
+from django_classified.models import Item
+from .models import TradeProposal, TradeFeedback, UserTradeProfile
+from .forms import TradeProposalForm, TradeResponseForm, TradeFeedbackForm
+
+
+class InboxTradesView(LoginRequiredMixin, ListView):
+    """Lista scambi ricevuti (inbox)"""
+    template_name = "trade/inbox.html"
+    context_object_name = "trades"
+    paginate_by = 10
+
+    def get_queryset(self):
+        return TradeProposal.objects.filter(
+            to_user=self.request.user
+        ).select_related(
+            'from_user', 'offer_item', 'want_item'
+        ).order_by('-created_at')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['pending_count'] = self.get_queryset().filter(
+            state=TradeProposal.STATE_SENT
+        ).count()
+        context['view_type'] = 'inbox'
+        return context
+
+
+class SentTradesView(LoginRequiredMixin, ListView):
+    """Lista scambi inviati"""
+    template_name = "trade/sent.html"
+    context_object_name = "trades"
+    paginate_by = 10
+
+    def get_queryset(self):
+        return TradeProposal.objects.filter(
+            from_user=self.request.user
+        ).select_related(
+            'to_user', 'offer_item', 'want_item'
+        ).order_by('-created_at')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['pending_count'] = self.get_queryset().filter(
+            state=TradeProposal.STATE_SENT
+        ).count()
+        context['view_type'] = 'sent'
+        return context
+
+
+class TradeDetailView(LoginRequiredMixin, DetailView):
+    """Dettaglio singolo scambio"""
+    model = TradeProposal
+    template_name = "trade/detail.html"
+    context_object_name = "trade"
+
+    def get_object(self):
+        trade = super().get_object()
+        # Solo utenti coinvolti nello scambio possono visualizzare
+        if self.request.user not in [trade.from_user, trade.to_user]:
+            raise HttpResponseForbidden("Non autorizzato")
+        return trade
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        trade = self.get_object()
+        user = self.request.user
+        
+        # Permessi per azioni
+        context['can_accept'] = trade.can_accept(user)
+        context['can_decline'] = trade.can_decline(user)
+        context['can_cancel'] = trade.can_cancel(user)
+        context['can_complete'] = trade.can_complete(user)
+        
+        # Form per rispondere (se è il destinatario)
+        if user == trade.to_user and trade.state == TradeProposal.STATE_SENT:
+            context['response_form'] = TradeResponseForm(user, trade)
+        
+        # Form feedback se completato e non ancora dato
+        if trade.state == TradeProposal.STATE_COMPLETED:
+            try:
+                existing_feedback = TradeFeedback.objects.get(trade=trade, rater=user)
+                context['my_feedback'] = existing_feedback
+            except TradeFeedback.DoesNotExist:
+                context['feedback_form'] = TradeFeedbackForm(trade, user)
+        
+        return context
+
+
+class ProposeTradeView(LoginRequiredMixin, View):
+    """Proponi uno scambio per un annuncio specifico"""
+    template_name = "trade/propose.html"
+
+    def get(self, request, item_id):
+        want_item = get_object_or_404(Item, pk=item_id, is_active=True)
+        
+        # Non puoi scambiare con te stesso
+        if want_item.user == request.user:
+            messages.error(request, "Non puoi proporre scambi per i tuoi annunci.")
+            return redirect(want_item.get_absolute_url())
+        
+        # ⭐ CONTROLLA SE L'ANNUNCIO È ANCORA DISPONIBILE
+        if not want_item.is_active:
+            messages.error(request, "❌ Questo annuncio non è più disponibile per scambi.")
+            return redirect('django_classified:index')
+        
+        # Controlla se ha già una proposta pendente per questo annuncio
+        existing_proposal = TradeProposal.objects.filter(
+            from_user=request.user,
+            want_item=want_item,
+            state=TradeProposal.STATE_SENT
+        ).first()
+        
+        if existing_proposal:
+            messages.warning(request, f"⏳ Hai già una proposta pendente per questo annuncio.")
+            return redirect('trade:detail', pk=existing_proposal.pk)
+        
+        form = TradeProposalForm(request.user, want_item)
+        
+        # Controlla se ha annunci disponibili
+        available_items = Item.objects.filter(
+            user=request.user, 
+            is_active=True
+        ).exclude(pk=item_id)
+        
+        context = {
+            'want_item': want_item,
+            'form': form,
+            'available_items': available_items,
+            'has_items': available_items.exists()
+        }
+        
+        return render(request, self.template_name, context)
+
+    def post(self, request, item_id):
+        want_item = get_object_or_404(Item, pk=item_id, is_active=True)
+        
+        if want_item.user == request.user:
+            return HttpResponseForbidden()
+        
+        # ⭐ DOPPIO CONTROLLO: L'ANNUNCIO È ANCORA ATTIVO?
+        if not want_item.is_active:
+            messages.error(request, "❌ Questo annuncio non è più disponibile.")
+            return redirect('django_classified:index')
+        
+        form = TradeProposalForm(request.user, want_item, request.POST)
+        
+        if form.is_valid():
+            offer_item = form.cleaned_data['offer_item']
+            
+            # ⭐ CONTROLLA CHE ANCHE L'ANNUNCIO OFFERTO SIA ATTIVO
+            if not offer_item.is_active:
+                messages.error(request, "❌ L'annuncio che vuoi offrire non è più disponibile.")
+                return redirect('trade:sent')
+            
+            proposal = form.save(commit=False)
+            proposal.from_user = request.user
+            proposal.to_user = want_item.user
+            proposal.want_item = want_item
+            proposal.save()
+            
+            messages.success(
+                request, 
+                f"✅ Proposta inviata a {want_item.user.username}!"
+            )
+            return redirect('trade:sent')
+        
+        context = {
+            'want_item': want_item,
+            'form': form,
+        }
+        return render(request, self.template_name, context)
+
+
+class TradeActionView(LoginRequiredMixin, View):
+    """View unificata per azioni su scambi (accept/decline/cancel/complete)"""
+    
+    def post(self, request, pk, action):
+        trade = get_object_or_404(TradeProposal, pk=pk)
+        user = request.user
+        
+        # Verifica permessi base
+        if not trade.can_user_act(user):
+            return HttpResponseForbidden("Non autorizzato")
+        
+        # Esegui l'azione richiesta
+        try:
+            if action == 'accept' and trade.can_accept(user):
+                trade.accept()
+                trade.save()
+                messages.success(request, "✅ Proposta accettata!")
+                
+            elif action == 'decline' and trade.can_decline(user):
+                trade.decline()
+                trade.save()
+                messages.info(request, "❌ Proposta rifiutata.")
+                
+            elif action == 'cancel' and trade.can_cancel(user):
+                trade.cancel()
+                trade.save()
+                messages.warning(request, "🚫 Proposta annullata.")
+                
+            elif action == 'complete' and trade.can_complete(user):
+                trade.complete()
+                trade.save()
+                messages.success(request, "🎉 Scambio completato! Lascia un feedback.")
+                
+            else:
+                messages.error(request, "Azione non permessa.")
+                
+        except Exception as e:
+            messages.error(request, f"Errore: {str(e)}")
+        
+        # Redirect intelligente
+        if user == trade.to_user:
+            return redirect('trade:inbox')
+        else:
+            return redirect('trade:sent')
+
+
+@method_decorator(login_required, name='dispatch')
+class SubmitFeedbackView(View):
+    """Submit feedback per uno scambio completato"""
+    
+    def post(self, request, pk):
+        trade = get_object_or_404(
+            TradeProposal, 
+            pk=pk, 
+            state=TradeProposal.STATE_COMPLETED
+        )
+        
+        # Verifica che l'utente abbia partecipato allo scambio
+        if request.user not in [trade.from_user, trade.to_user]:
+            return HttpResponseForbidden()
+        
+        # Verifica che non abbia già lasciato feedback
+        if TradeFeedback.objects.filter(trade=trade, rater=request.user).exists():
+            messages.warning(request, "Hai già lasciato un feedback per questo scambio.")
+            return redirect('trade:detail', pk=pk)
+        
+        form = TradeFeedbackForm(trade, request.user, request.POST)
+        
+        if form.is_valid():
+            feedback = form.save(commit=False)
+            feedback.trade = trade
+            feedback.rater = request.user
+            feedback.ratee = trade.to_user if request.user == trade.from_user else trade.from_user
+            feedback.save()
+            
+            # Aggiorna stats dell'utente votato
+            try:
+                feedback.ratee.trade_profile.update_stats()
+            except UserTradeProfile.DoesNotExist:
+                UserTradeProfile.objects.create(user=feedback.ratee)
+                feedback.ratee.trade_profile.update_stats()
+            
+            messages.success(request, f"⭐ Feedback inviato a {feedback.ratee.username}!")
+            
+        else:
+            messages.error(request, "Errore nel form del feedback.")
+        
+        return redirect('trade:detail', pk=pk)
+
+
+class UserTradeStatsView(LoginRequiredMixin, DetailView):
+    """Statistiche scambi di un utente"""
+    template_name = "trade/user_stats.html"
+    context_object_name = "target_user"
+    
+    def get_object(self):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        return get_object_or_404(User, username=self.kwargs['username'])
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        target_user = self.get_object()
+        
+        # Crea profilo se non esiste
+        profile, created = UserTradeProfile.objects.get_or_create(user=target_user)
+        if created:
+            profile.update_stats()
+        
+        context['trade_profile'] = profile
+        
+        # Statistiche aggiuntive
+        context['recent_trades'] = TradeProposal.objects.filter(
+            Q(from_user=target_user) | Q(to_user=target_user),
+            state=TradeProposal.STATE_COMPLETED
+        ).select_related('from_user', 'to_user', 'offer_item', 'want_item')[:5]
+
+<<TRUNCATED: showing first 300 lines>>
+```
+
+
+### trade/admin.py
+
+```python
+from django.contrib import admin
+
+# Register your models here.
+from django.contrib import admin
+from .models import TradeProposal, TradeFeedback
+
+@admin.register(TradeProposal)
+class TradeProposalAdmin(admin.ModelAdmin):
+    list_display = ("id", "from_user", "to_user", "offer_item", "want_item", "state", "created_at")
+    list_filter = ("state",)
+    search_fields = ("from_user__username", "to_user__username")
+
+@admin.register(TradeFeedback)
+class TradeFeedbackAdmin(admin.ModelAdmin):
+    list_display = ("id", "trade", "rater", "ratee", "rating", "created_at")
+    list_filter = ("rating",)
+```
+
+
+### trade/apps.py
+
+```python
+from django.apps import AppConfig
+
+
+class TradeConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'trade'
+```
+
+
+### trade/forms.py
+
+```python
+from django import forms
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from crispy_forms.helper import FormHelper
+from crispy_forms.layout import Layout, Submit, HTML, Row, Column, Div, Field
+from crispy_forms.bootstrap import InlineRadios
+
+from django_classified.models import Item
+from .models import TradeProposal, TradeFeedback, UserTradeProfile
+from .models import TradeMessage  # messaggistica interna
+
+User = get_user_model()
+
+
+# ------------------------------------------------------------
+# Messaggistica interna per gli scambi
+# ------------------------------------------------------------
+class TradeMessageForm(forms.ModelForm):
+    """
+    Form minimale per inviare un messaggio interno in un Trade.
+    Firma: TradeMessageForm(trade, sender, data=None, files=None, **kwargs)
+    """
+    class Meta:
+        model = TradeMessage
+        fields = ["message"]
+        widgets = {
+            "message": forms.Textarea(attrs={
+                "rows": 3,
+                "placeholder": "Scrivi un messaggio per organizzare lo scambio…",
+                "class": "form-control"
+            })
+        }
+
+    def __init__(self, trade, sender, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.trade = trade
+        self.sender = sender
+
+        # Crispy (opzionale)
+        try:
+            self.helper = FormHelper()
+            self.helper.form_method = "post"
+            self.helper.layout = Layout(
+                Field("message"),
+                Submit("send", "Invia messaggio", css_class="btn btn-primary btn-block")
+            )
+        except Exception:
+            pass
+
+    def save(self, commit=True):
+        obj = super().save(commit=False)
+        obj.trade = self.trade
+        obj.sender = self.sender
+        # Destinatario = l’altro partecipante allo scambio
+        obj.recipient = self.trade.to_user if self.sender == self.trade.from_user else self.trade.from_user
+        if commit:
+            obj.save()
+        return obj
+
+
+# ------------------------------------------------------------
+# Creazione proposta di scambio
+# ------------------------------------------------------------
+class TradeProposalForm(forms.ModelForm):
+    """Form per creare una proposta di scambio"""
+
+    class Meta:
+        model = TradeProposal
+        fields = ["offer_item", "message"]
+        widgets = {
+            "message": forms.Textarea(attrs={
+                "rows": 4,
+                "placeholder": "Scrivi un messaggio opzionale per la tua proposta...",
+                "class": "form-control"
+            }),
+        }
+
+    def __init__(self, user, target_item, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        self.target_item = target_item
+
+        # Solo annunci attivi dell'utente corrente, escluso quello target
+        self.fields["offer_item"].queryset = Item.objects.filter(
+            user=user,
+            is_active=True
+        ).exclude(pk=target_item.pk)
+
+        self.fields["offer_item"].empty_label = "Seleziona il tuo annuncio da offrire..."
+
+        # Avviso se l'utente non ha annunci attivi
+        if not self.fields["offer_item"].queryset.exists():
+            self.fields["offer_item"].help_text = """
+            <div class="alert alert-warning">
+                Non hai annunci attivi da offrire.
+                <a href="/item/new/" class="alert-link">Pubblica un annuncio</a> prima di proporre scambi.
+            </div>
+            """
+
+        # Crispy layout
+        self.helper = FormHelper()
+        self.helper.form_method = "post"
+        self.helper.layout = Layout(
+            HTML(f"""
+                <div class="card mb-3">
+                    <div class="card-header bg-info text-white">
+                        <h5><i class="fas fa-exchange-alt"></i> Proponi Scambio</h5>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>Annuncio richiesto:</strong> {self.target_item.title}</p>
+                        <p class="text-muted">Proprietario: {self.target_item.user.username}</p>
+                    </div>
+                </div>
+            """),
+            Field("offer_item", css_class="form-control form-control-lg"),
+            Field("message"),
+            HTML("<hr>"),
+            Div(
+                Submit("submit", "📤 Invia Proposta", css_class="btn btn-success btn-lg btn-block"),
+                HTML('<a href="{{ want_item.get_absolute_url }}" class="btn btn-secondary btn-block">❌ Annulla</a>'),
+                css_class="text-center"
+            )
+        )
+
+    def clean_offer_item(self):
+        offer_item = self.cleaned_data.get("offer_item")
+        if not offer_item:
+            raise ValidationError("Devi selezionare un annuncio da offrire.")
+
+        if offer_item.user != self.user:
+            raise ValidationError("Puoi offrire solo i tuoi annunci.")
+
+        if offer_item == self.target_item:
+            raise ValidationError("Non puoi offrire lo stesso annuncio che stai richiedendo.")
+
+        # Evita proposte duplicate pendenti
+        existing = TradeProposal.objects.filter(
+            from_user=self.user,
+            to_user=self.target_item.user,
+            offer_item=offer_item,
+            want_item=self.target_item,
+            state=TradeProposal.STATE_SENT
+        ).exists()
+        if existing:
+            raise ValidationError("Hai già una proposta pendente per questo scambio.")
+
+        return offer_item
+
+
+# ------------------------------------------------------------
+# Risposta alla proposta (accetta / rifiuta / controproposta)
+# ------------------------------------------------------------
+class TradeResponseForm(forms.Form):
+    """Form per rispondere a una proposta (accetta/rifiuta con messaggio)"""
+
+    ACTION_ACCEPT = "accept"
+    ACTION_DECLINE = "decline"
+    ACTION_COUNTER = "counter"
+
+    ACTION_CHOICES = [
+        (ACTION_ACCEPT, "✅ Accetta"),
+        (ACTION_DECLINE, "❌ Rifiuta"),
+        (ACTION_COUNTER, "🔄 Fai Controproposta"),
+    ]
+
+    action = forms.ChoiceField(
+        choices=ACTION_CHOICES,
+        widget=forms.RadioSelect,
+        label="Come vuoi rispondere?"
+    )
+
+    response_message = forms.CharField(
+        widget=forms.Textarea(attrs={"rows": 3, "placeholder": "Messaggio opzionale..."}),
+        required=False,
+        label="Messaggio di risposta"
+    )
+
+    # Solo per controposte
+    counter_offer_item = forms.ModelChoiceField(
+        queryset=Item.objects.none(),
+        required=False,
+        empty_label="Seleziona un altro tuo annuncio...",
+        label="Il tuo annuncio alternativo"
+    )
+
+    def __init__(self, user, trade_proposal, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        self.trade_proposal = trade_proposal
+
+        # Solo annunci dell'utente destinatario (diversi da quello già proposto)
+        self.fields["counter_offer_item"].queryset = Item.objects.filter(
+            user=user,
+            is_active=True
+        ).exclude(pk=trade_proposal.want_item.pk)
+
+        # Crispy layout
+        self.helper = FormHelper()
+        self.helper.layout = Layout(
+            HTML(f"""
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Risposta a: {self.trade_proposal.from_user.username}</h5>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>Offre:</strong> {self.trade_proposal.offer_item.title}</p>
+                        <p><strong>Vuole:</strong> {self.trade_proposal.want_item.title}</p>
+                        <p><strong>Messaggio originale:</strong><br>
+                           <em>{self.trade_proposal.message or 'Nessun messaggio'}</em></p>
+                    </div>
+                </div>
+                <hr>
+            """),
+            InlineRadios("action"),
+            Field("response_message"),
+            Div(
+                Field("counter_offer_item"),
+                css_id="counter-offer-section",
+                style="display: none;"
+            ),
+            HTML("""
+                <script>
+                    document.addEventListener('DOMContentLoaded', function() {
+                        const actionRadios = document.querySelectorAll('input[name="action"]');
+                        const counterSection = document.getElementById('counter-offer-section');
+                        actionRadios.forEach(radio => {
+                            radio.addEventListener('change', function() {
+                                counterSection.style.display = (this.value === 'counter') ? 'block' : 'none';
+                            });
+                        });
+                    });
+                </script>
+            """),
+            Submit("submit", "Invia Risposta", css_class="btn btn-primary btn-lg btn-block")
+        )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        action = cleaned_data.get("action")
+        counter_item = cleaned_data.get("counter_offer_item")
+
+        if action == self.ACTION_COUNTER and not counter_item:
+            raise ValidationError("Devi selezionare un annuncio per la controproposta.")
+        return cleaned_data
+
+
+# ------------------------------------------------------------
+# Feedback post-scambio
+# ------------------------------------------------------------
+class TradeFeedbackForm(forms.ModelForm):
+    """
+    Form per lasciare feedback dopo uno scambio completato.
+    FIX: pre-assegniamo trade/rater/ratee sull'istanza PRIMA della validazione
+         per evitare errori nel model.clean() (RelatedObjectDoesNotExist).
+    """
+
+    class Meta:
+        model = TradeFeedback
+        fields = ["rating", "comment"]
+        widgets = {
+            # Widget finale impostato in __init__ come TypedChoiceField con InlineRadios
+            "comment": forms.Textarea(attrs={
+                "rows": 4,
+                "placeholder": "Condividi la tua esperienza con questo scambio..."
+            })
+        }
+
+    def __init__(self, trade_proposal, rater, *args, **kwargs):
+        """
+        Firma: TradeFeedbackForm(trade_proposal, rater, data=None, files=None, **kwargs)
+        """
+        super().__init__(*args, **kwargs)
+
+        # ✅ Pre-assegna campi chiave sull'istanza usata dal ModelForm
+        self.instance.trade = trade_proposal
+        self.instance.rater = rater
+        self.instance.ratee = trade_proposal.to_user if rater == trade_proposal.from_user else trade_proposal.from_user
+
+        # Sostituiamo il campo rating con un TypedChoiceField (1..5) + InlineRadios
+        self.fields["rating"] = forms.TypedChoiceField(
+            coerce=int,
+            choices=[(i, f"{i} ⭐") for i in range(1, 6)],
+            widget=InlineRadios(),
+            label="Valutazione"
+        )
+
+        # Crispy layout
+        self.helper = FormHelper()
+        self.helper.layout = Layout(
+            HTML(f"""
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h5>Valuta il tuo scambio con {self.instance.ratee.username}</h5>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>Scambio:</strong> {trade_proposal.offer_item.title} ↔ {trade_proposal.want_item.title}</p>
+                        <p class="text-muted">Puoi lasciare un giudizio da 1 a 5 stelle.</p>
+                    </div>
+                </div>
+            """),
+
+<<TRUNCATED: showing first 300 lines>>
+```
+
+
+### trade/models.py
+
+```python
+from django.conf import settings
+from django.db import models
+from django.urls import reverse
+from django.utils import timezone
+from datetime import timedelta
+from django_fsm import FSMField
+from django.core.exceptions import ValidationError
+
+# Logging per tracciare azioni
+import logging
+logger = logging.getLogger(__name__)
+
+# NB: il modello degli annunci del pacchetto django_classified si chiama "Item"
+from django_classified.models import Item
+
+class TradeProposal(models.Model):
+    STATE_SENT = "sent"
+    STATE_ACCEPTED = "accepted"
+    STATE_DECLINED = "declined"
+    STATE_CANCELLED = "cancelled"
+    STATE_COMPLETED = "completed"
+
+    STATE_CHOICES = [
+        (STATE_SENT, "Inviata"),
+        (STATE_ACCEPTED, "Accettata"),
+        (STATE_DECLINED, "Rifiutata"),
+        (STATE_CANCELLED, "Annullata"),
+        (STATE_COMPLETED, "Completata"),
+    ]
+
+    from_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="proposals_sent"
+    )
+    to_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="proposals_received"
+    )
+
+    offer_item = models.ForeignKey(
+        Item, on_delete=models.PROTECT, related_name="trade_offers"
+    )  # annuncio dell'offerente
+    want_item = models.ForeignKey(
+        Item, on_delete=models.PROTECT, related_name="trade_targets"
+    )  # annuncio del destinatario
+
+    message = models.TextField(blank=True, help_text="Messaggio opzionale per la proposta")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # NUOVI CAMPI
+    expires_at = models.DateTimeField(null=True, blank=True, help_text="Scadenza automatica proposta")
+    is_counter_offer = models.BooleanField(default=False)
+    parent_proposal = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE)
+
+    # ⭐ USIAMO CharField INVECE DI FSMField
+    state = models.CharField(max_length=20, choices=STATE_CHOICES, default=STATE_SENT)
+
+    class Meta:
+        constraints = [
+            # Non puoi proporre uno scambio a te stesso
+            models.CheckConstraint(
+                check=~models.Q(from_user=models.F("to_user")), name="tp_users_distinct"
+            ),
+            # Non puoi scambiare lo stesso annuncio con se stesso
+            models.CheckConstraint(
+                check=~models.Q(offer_item=models.F("want_item")), name="tp_items_distinct"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["to_user", "state"]),
+            models.Index(fields=["from_user", "state"]),
+            models.Index(fields=["created_at"]),
+            models.Index(fields=["expires_at"]),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.from_user} → {self.to_user} | {self.offer_item.title} ↔ {self.want_item.title} [{self.get_state_display()}]"
+
+    def save(self, *args, **kwargs):
+        # Auto-imposta scadenza a 7 giorni se non specificata
+        if not self.expires_at and self.state == self.STATE_SENT:
+            self.expires_at = timezone.now() + timedelta(days=7)
+        super().save(*args, **kwargs)
+
+    def cancel_competing_proposals(self):
+        """
+        Quando una proposta viene accettata, annulla automaticamente 
+        tutte le altre proposte pendenti per gli stessi annunci
+        """
+        print(f"🔥 CANCEL_COMPETING: Cercando proposte concorrenti per Trade {self.id}")
+        
+        # Trova proposte concorrenti per l'annuncio offerto
+        competing_for_offer = list(TradeProposal.objects.filter(
+            want_item=self.offer_item,
+            state=self.STATE_SENT
+        ).exclude(pk=self.pk))
+        
+        # Trova proposte concorrenti per l'annuncio richiesto
+        competing_for_want = list(TradeProposal.objects.filter(
+            want_item=self.want_item,
+            state=self.STATE_SENT
+        ).exclude(pk=self.pk))
+        
+        # Combina le liste (invece di union)
+        all_competing = competing_for_offer + competing_for_want
+        # Rimuovi duplicati se ce ne sono
+        seen_ids = set()
+        unique_competing = []
+        for proposal in all_competing:
+            if proposal.id not in seen_ids:
+                unique_competing.append(proposal)
+                seen_ids.add(proposal.id)
+        
+        print(f"🔥 CANCEL_COMPETING: Trovate {len(unique_competing)} proposte da annullare")
+        
+        for proposal in unique_competing:
+            proposal.state = self.STATE_CANCELLED
+            proposal.save(update_fields=['state'])
+            logger.info(f"Trade {proposal.id}: Automaticamente annullata per conflitto con Trade {self.id}")
+            print(f"🔥 CANCEL_COMPETING: Annullata proposta {proposal.id}")
+
+    def get_absolute_url(self):
+        return reverse('trade:detail', kwargs={'pk': self.pk})
+    
+    def is_expired(self):
+        """Controlla se la proposta è scaduta"""
+        if not self.expires_at:
+            return False
+        return timezone.now() > self.expires_at and self.state == self.STATE_SENT
+    
+    def can_user_act(self, user):
+        """Verifica se l'utente può agire su questa proposta"""
+        return user in [self.from_user, self.to_user]
+    
+    def can_accept(self, user):
+        """Solo il destinatario può accettare"""
+        return user == self.to_user and self.state == self.STATE_SENT and not self.is_expired()
+    
+    def can_decline(self, user):
+        """Solo il destinatario può rifiutare"""
+        return user == self.to_user and self.state == self.STATE_SENT
+    
+    def can_cancel(self, user):
+        """Entrambi possono annullare"""
+        return user in [self.from_user, self.to_user] and self.state in [self.STATE_SENT, self.STATE_ACCEPTED]
+    
+    def can_complete(self, user):
+        """Entrambi possono completare se accettata"""
+        return user in [self.from_user, self.to_user] and self.state == self.STATE_ACCEPTED
+
+    # ⭐ METODI MANUALI (NON PIÙ FSM) CON LOGICA COMPLETA
+    def accept(self):
+        """Accetta la proposta e disattiva gli annunci"""
+        print(f"🔥🔥🔥 ACCEPT MANUALE CHIAMATO! Trade {self.id} 🔥🔥🔥")
+        
+        # Verifica stato
+        if self.state != self.STATE_SENT:
+            raise ValidationError(f"Non puoi accettare una proposta in stato '{self.state}'")
+        
+        try:
+            # Log dell'azione
+            logger.info(f"Trade {self.id}: {self.to_user} ha accettato proposta da {self.from_user}")
+            print(f"🔥 Log scritto per Trade {self.id}")
+            
+            # Refresh degli oggetti dal database per sicurezza
+            self.offer_item.refresh_from_db()
+            self.want_item.refresh_from_db()
+            
+            print(f"🔥 PRIMA della modifica:")
+            print(f"   - offer_item({self.offer_item.id}).is_active = {self.offer_item.is_active}")
+            print(f"   - want_item({self.want_item.id}).is_active = {self.want_item.is_active}")
+            
+            # ⭐ CAMBIA STATO PRIMA DI TUTTO
+            self.state = self.STATE_ACCEPTED
+            print(f"🔥 Stato cambiato in: {self.state}")
+            
+            # ⭐ DISATTIVA GLI ANNUNCI COINVOLTI (RISERVATI)
+            self.offer_item.is_active = False
+            self.offer_item.save(update_fields=['is_active'])
+            print(f"🔥 offer_item disattivato")
+            
+            self.want_item.is_active = False  
+            self.want_item.save(update_fields=['is_active'])
+            print(f"🔥 want_item disattivato")
+            
+            # Verifica che le modifiche siano state applicate
+            self.offer_item.refresh_from_db()
+            self.want_item.refresh_from_db()
+            
+            print(f"🔥 DOPO la modifica (refresh dal DB):")
+            print(f"   - offer_item({self.offer_item.id}).is_active = {self.offer_item.is_active}")
+            print(f"   - want_item({self.want_item.id}).is_active = {self.want_item.is_active}")
+            
+            # ⭐ ANNULLA PROPOSTE CONCORRENTI
+            self.cancel_competing_proposals()
+            
+            logger.info(f"Trade {self.id}: Annunci {self.offer_item.id} e {self.want_item.id} disattivati (riservati)")
+            print(f"🔥 ACCEPT completato con successo per Trade {self.id}")
+            
+        except Exception as e:
+            print(f"🔥🔥🔥 ERRORE CRITICO in accept(): {e} 🔥🔥🔥")
+            print(f"🔥 Tipo errore: {type(e).__name__}")
+            import traceback
+            print(f"🔥 Traceback: {traceback.format_exc()}")
+            logger.error(f"ERRORE in Trade.accept(): {e}")
+            raise
+
+    def decline(self):
+        """Rifiuta la proposta"""
+        print(f"🔥 DECLINE chiamato per Trade {self.id}")
+        
+        if self.state != self.STATE_SENT:
+            raise ValidationError(f"Non puoi rifiutare una proposta in stato '{self.state}'")
+        
+        self.state = self.STATE_DECLINED
+        logger.info(f"Trade {self.id}: {self.to_user} ha rifiutato proposta da {self.from_user}")
+        print(f"🔥 DECLINE completato per Trade {self.id}")
+
+    def cancel(self):
+        """Annulla la proposta"""
+        print(f"🔥 CANCEL chiamato per Trade {self.id}, stato attuale: {self.state}")
+        
+        if self.state not in [self.STATE_SENT, self.STATE_ACCEPTED]:
+            raise ValidationError(f"Non puoi annullare una proposta in stato '{self.state}'")
+        
+        try:
+            old_state = self.state
+            self.state = self.STATE_CANCELLED
+            
+            # ⭐ RIATTIVA GLI ANNUNCI SE ERANO STATI DISATTIVATI
+            if old_state == self.STATE_ACCEPTED:
+                print(f"🔥 Stato era ACCEPTED, riattivando annunci")
+                
+                self.offer_item.refresh_from_db()
+                self.want_item.refresh_from_db()
+                
+                print(f"🔥 PRIMA del cancel (is_active): offer={self.offer_item.is_active}, want={self.want_item.is_active}")
+                
+                # Solo se erano stati disattivati per questo scambio
+                self.offer_item.is_active = True
+                self.offer_item.save(update_fields=['is_active'])
+                
+                self.want_item.is_active = True
+                self.want_item.save(update_fields=['is_active'])
+                
+                self.offer_item.refresh_from_db()
+                self.want_item.refresh_from_db()
+                
+                print(f"🔥 DOPO il cancel (is_active): offer={self.offer_item.is_active}, want={self.want_item.is_active}")
+                
+                logger.info(f"Trade {self.id}: Annunci {self.offer_item.id} e {self.want_item.id} riattivati")
+            else:
+                print(f"🔥 Stato non era ACCEPTED, annunci non riattivati")
+                
+            logger.info(f"Trade {self.id}: Proposta annullata")
+                
+        except Exception as e:
+            print(f"🔥🔥🔥 ERRORE in cancel(): {e} 🔥🔥🔥")
+            logger.error(f"ERRORE in Trade.cancel(): {e}")
+            raise
+
+    def complete(self):
+        """Completa lo scambio"""
+        print(f"🔥 COMPLETE chiamato per Trade {self.id}")
+        
+        if self.state != self.STATE_ACCEPTED:
+            raise ValidationError(f"Non puoi completare una proposta in stato '{self.state}'")
+        
+        self.state = self.STATE_COMPLETED
+        logger.info(f"Trade {self.id}: Scambio completato tra {self.from_user} e {self.to_user}")
+        
+        # GLI ANNUNCI RIMANGONO DISATTIVATI (SCAMBIATI DEFINITIVAMENTE)
+        print(f"🔥 Annunci rimangono disattivati (scambio completato)")
+        
+        # Aggiorna statistiche utenti
+        try:
+            self.from_user.trade_profile.update_stats()
+            self.to_user.trade_profile.update_stats()
+            print(f"🔥 Statistiche aggiornate per entrambi gli utenti")
+        except UserTradeProfile.DoesNotExist:
+            print(f"🔥 UserTradeProfile non esiste, saltando aggiornamento statistiche")
+            pass
+        
+        print(f"🔥 COMPLETE completato per Trade {self.id}")
+
+
+class TradeMessage(models.Model):
+    """Sistema di messaggistica interna per gli scambi"""
+    trade = models.ForeignKey(TradeProposal, on_delete=models.CASCADE, related_name="messages")
+    sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sent_trade_messages")
+    recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="received_trade_messages")
+    
+    message = models.TextField(max_length=1000, help_text="Messaggio per organizzare lo scambio")
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_read = models.BooleanField(default=False)
+    
+    class Meta:
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=["trade", "created_at"]),
+
+<<TRUNCATED: showing first 300 lines>>
+```
+
+
+### trade/views.py
+
+```python
+from django.shortcuts import render, get_object_or_404, redirect
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.decorators import login_required
+from django.contrib import messages
+from django.http import HttpResponseForbidden, JsonResponse
+from django.views.generic import ListView, DetailView, View
+from django.db.models import Q
+from django.utils.decorators import method_decorator
+from django.core.exceptions import PermissionDenied
+
+from django_classified.models import Item
+from .models import TradeProposal, TradeFeedback, UserTradeProfile, TradeMessage
+from .forms import (
+    TradeProposalForm,
+    TradeResponseForm,
+    TradeFeedbackForm,
+    TradeMessageForm,
+)
+
+
+class InboxTradesView(LoginRequiredMixin, ListView):
+    """Lista scambi ricevuti (inbox)"""
+    template_name = "trade/inbox.html"
+    context_object_name = "trades"
+    paginate_by = 10
+
+    def get_queryset(self):
+        return (
+            TradeProposal.objects.filter(to_user=self.request.user)
+            .select_related("from_user", "offer_item", "want_item")
+            .order_by("-created_at")
+        )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["pending_count"] = self.get_queryset().filter(
+            state=TradeProposal.STATE_SENT
+        ).count()
+        context["view_type"] = "inbox"
+        return context
+
+
+class SentTradesView(LoginRequiredMixin, ListView):
+    """Lista scambi inviati"""
+    template_name = "trade/sent.html"
+    context_object_name = "trades"
+    paginate_by = 10
+
+    def get_queryset(self):
+        return (
+            TradeProposal.objects.filter(from_user=self.request.user)
+            .select_related("to_user", "offer_item", "want_item")
+            .order_by("-created_at")
+        )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["pending_count"] = self.get_queryset().filter(
+            state=TradeProposal.STATE_SENT
+        ).count()
+        context["view_type"] = "sent"
+        return context
+
+
+class TradeDetailView(LoginRequiredMixin, DetailView):
+    """Dettaglio singolo scambio"""
+    model = TradeProposal
+    template_name = "trade/detail.html"
+    context_object_name = "trade"
+
+    def get_object(self):
+        trade = super().get_object()
+        # Solo utenti coinvolti nello scambio possono visualizzare
+        if self.request.user not in [trade.from_user, trade.to_user]:
+            raise PermissionDenied("Non autorizzato")
+        return trade
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        trade = self.get_object()
+        user = self.request.user
+
+        # Permessi per azioni
+        context["can_accept"] = trade.can_accept(user)
+        context["can_decline"] = trade.can_decline(user)
+        context["can_cancel"] = trade.can_cancel(user)
+        context["can_complete"] = trade.can_complete(user)
+
+        # Form per rispondere (se è il destinatario e proposta pendente)
+        if user == trade.to_user and trade.state == TradeProposal.STATE_SENT:
+            context["response_form"] = TradeResponseForm(user, trade)
+
+        # Messaggistica interna (accettato o completato)
+        if trade.state in [TradeProposal.STATE_ACCEPTED, TradeProposal.STATE_COMPLETED]:
+            # Carica tutti i messaggi del trade
+            trade_msgs = trade.messages.all().select_related("sender", "recipient")
+            context["trade_messages"] = trade_msgs
+
+            # Form per nuovo messaggio
+            context["message_form"] = TradeMessageForm(trade, user)
+
+            # Segna come letti i messaggi ricevuti
+            trade_msgs.filter(recipient=user, is_read=False).update(is_read=True)
+
+        # Form feedback se completato e non ancora dato
+        if trade.state == TradeProposal.STATE_COMPLETED:
+            try:
+                existing_feedback = TradeFeedback.objects.get(trade=trade, rater=user)
+                context["my_feedback"] = existing_feedback
+            except TradeFeedback.DoesNotExist:
+                context["feedback_form"] = TradeFeedbackForm(trade, user)
+
+        return context
+
+
+class ProposeTradeView(LoginRequiredMixin, View):
+    """Proponi uno scambio per un annuncio specifico"""
+    template_name = "trade/propose.html"
+
+    def get(self, request, item_id):
+        want_item = get_object_or_404(Item, pk=item_id, is_active=True)
+
+        # Non puoi scambiare con te stesso
+        if want_item.user == request.user:
+            messages.error(request, "Non puoi proporre scambi per i tuoi annunci.")
+            return redirect(want_item.get_absolute_url())
+
+        # Doppio check: attivo?
+        if not want_item.is_active:
+            messages.error(request, "Questo annuncio non è più disponibile per scambi.")
+            return redirect("django_classified:index")
+
+        # Hai già una proposta pendente per questo annuncio?
+        existing_proposal = TradeProposal.objects.filter(
+            from_user=request.user, want_item=want_item, state=TradeProposal.STATE_SENT
+        ).first()
+        if existing_proposal:
+            messages.warning(
+                request, "Hai già una proposta pendente per questo annuncio."
+            )
+            return redirect("trade:detail", pk=existing_proposal.pk)
+
+        form = TradeProposalForm(request.user, want_item)
+
+        # Annunci offerta disponibili dell'utente
+        available_items = (
+            Item.objects.filter(user=request.user, is_active=True)
+            .exclude(pk=item_id)
+        )
+
+        context = {
+            "want_item": want_item,
+            "form": form,
+            "available_items": available_items,
+            "has_items": available_items.exists(),
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request, item_id):
+        want_item = get_object_or_404(Item, pk=item_id, is_active=True)
+
+        if want_item.user == request.user:
+            return HttpResponseForbidden()
+
+        if not want_item.is_active:
+            messages.error(request, "Questo annuncio non è più disponibile.")
+            return redirect("django_classified:index")
+
+        form = TradeProposalForm(request.user, want_item, request.POST)
+
+        if form.is_valid():
+            offer_item = form.cleaned_data["offer_item"]
+
+            if not offer_item.is_active:
+                messages.error(
+                    request, "L'annuncio che vuoi offrire non è più disponibile."
+                )
+                return redirect("trade:sent")
+
+            proposal = form.save(commit=False)
+            proposal.from_user = request.user
+            proposal.to_user = want_item.user
+            proposal.want_item = want_item
+            proposal.save()
+
+            messages.success(
+                request, f"Proposta inviata a {want_item.user.username}!"
+            )
+            return redirect("trade:sent")
+
+        context = {"want_item": want_item, "form": form}
+        return render(request, self.template_name, context)
+
+
+class TradeActionView(LoginRequiredMixin, View):
+    """Azioni su scambi (accept/decline/cancel/complete)"""
+
+    def post(self, request, pk, action):
+        print("🔥🔥🔥 TRADEACTIONVIEW CHIAMATA 🔥🔥🔥")
+        print(f"🔥 pk={pk}, action={action}, user={request.user}")
+
+        trade = get_object_or_404(TradeProposal, pk=pk)
+        user = request.user
+
+        print(f"🔥 Trade trovato: {trade}")
+        print(f"🔥 Trade.state attuale: {trade.state}")
+        print(f"🔥 Trade.from_user: {trade.from_user}")
+        print(f"🔥 Trade.to_user: {trade.to_user}")
+
+        # Permessi base
+        if not trade.can_user_act(user):
+            print("🔥 ERRORE: Utente non autorizzato ad agire")
+            return HttpResponseForbidden("Non autorizzato")
+
+        print(f"🔥 Permessi OK, eseguendo azione: {action}")
+
+        # Esegui azione
+        try:
+            if action == "accept" and trade.can_accept(user):
+                print("🔥 Condizione ACCEPT soddisfatta")
+                print(f"🔥 trade.can_accept({user}) = {trade.can_accept(user)}")
+                print("🔥 CHIAMANDO trade.accept() ...")
+                trade.accept()
+                print("🔥 trade.accept() completato")
+                print(f"🔥 Nuovo stato: {trade.state}")
+                print("🔥 CHIAMANDO trade.save() ...")
+                trade.save()
+                print("🔥 trade.save() completato")
+                print(f"🔥 Stato finale: {trade.state}")
+                messages.success(request, "Proposta accettata!")
+
+            elif action == "decline" and trade.can_decline(user):
+                print("🔥 CHIAMANDO trade.decline()")
+                trade.decline()
+                trade.save()
+                messages.info(request, "Proposta rifiutata.")
+
+            elif action == "cancel" and trade.can_cancel(user):
+                print("🔥 CHIAMANDO trade.cancel()")
+                trade.cancel()
+                trade.save()
+                messages.warning(request, "Proposta annullata.")
+
+            elif action == "complete" and trade.can_complete(user):
+                print("🔥 CHIAMANDO trade.complete()")
+                trade.complete()
+                trade.save()
+                messages.success(request, "Scambio completato! Lascia un feedback.")
+
+            else:
+                print("🔥 NESSUNA CONDIZIONE SODDISFATTA!")
+                print(f"🔥 action='{action}'")
+                print(f"🔥 can_accept={trade.can_accept(user)}")
+                print(f"🔥 can_decline={trade.can_decline(user)}")
+                print(f"🔥 can_cancel={trade.can_cancel(user)}")
+                print(f"🔥 can_complete={trade.can_complete(user)}")
+                messages.error(request, "Azione non permessa.")
+
+        except Exception as e:
+            print(f"🔥🔥🔥 ERRORE NELLA VIEW: {e} 🔥🔥🔥")
+            import traceback
+
+            print(f"🔥 Traceback completo: {traceback.format_exc()}")
+            messages.error(request, f"Errore: {str(e)}")
+
+        # Redirect
+        print("🔥 Redirect verso:", end=" ")
+        if action == "accept" and trade.state == "accepted":
+            print("detail (scambio accettato)")
+            return redirect("trade:detail", pk=trade.pk)
+
+        if user == trade.to_user:
+            print("inbox")
+            return redirect("trade:inbox")
+        else:
+            print("sent")
+            return redirect("trade:sent")
+
+
+@method_decorator(login_required, name="dispatch")
+class SendTradeMessageView(View):
+    """Invia messaggio per un trade"""
+
+    def post(self, request, pk):
+        trade = get_object_or_404(TradeProposal, pk=pk)
+        user = request.user
+
+        # Solo partecipanti
+        if user not in [trade.from_user, trade.to_user]:
+            return HttpResponseForbidden("Non autorizzato")
+
+        # Stato ammesso: accepted/completed
+        if trade.state not in [TradeProposal.STATE_ACCEPTED, TradeProposal.STATE_COMPLETED]:
+            messages.error(request, "Non puoi inviare messaggi per questo scambio.")
+            return redirect("trade:detail", pk=pk)
+
+        form = TradeMessageForm(trade, user, request.POST)
+        if form.is_valid():
+            form.save()  # il form imposta trade/sender/recipient
+            messages.success(request, "Messaggio inviato!")
+
+<<TRUNCATED: showing first 300 lines>>
+```
+
+
+### demo/templates/demo/login.html
+
+```html
+{% extends 'django_classified/_base.html' %}
+
+{% load i18n %}
+
+{% block title %}{% trans "Login" %}{% endblock title %}
+
+{% block body %}
+
+  <div class="row">
+    <div class="col-lg-12">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h4 class="modal-title">{% trans "Login" %}</h4>
+          </div>
+          <div class="modal-body">
+            <ul>
+              <li><a href="{% url "social:begin" "facebook" %}">Facebook</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+{% endblock %}
 ```
 
 
@@ -954,241 +2593,518 @@ urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 ```
 
 
-### trade/admin.py
+### templates/trade/detail.html
 
-```python
-from django.contrib import admin
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
 
-# Register your models here.
-from django.contrib import admin
-from .models import TradeProposal, TradeFeedback
+{% block title %}Dettagli Scambio #{{ trade.pk }}{% endblock %}
 
-@admin.register(TradeProposal)
-class TradeProposalAdmin(admin.ModelAdmin):
-    list_display = ("id", "from_user", "to_user", "offer_item", "want_item", "state", "created_at")
-    list_filter = ("state",)
-    search_fields = ("from_user__username", "to_user__username")
+{% block body %}
+<div class="container" style="max-width: 900px;">
+    <h3>🔄 Scambio #{{ trade.pk }}</h3>
+    
+    <!-- Status -->
+    <div class="row mb-3">
+        <div class="col-md-12">
+            <div class="alert 
+                {% if trade.state == 'sent' %}alert-warning
+                {% elif trade.state == 'accepted' %}alert-success
+                {% elif trade.state == 'completed' %}alert-info
+                {% elif trade.state == 'declined' %}alert-danger
+                {% else %}alert-secondary{% endif %}">
+                <h4>
+                    {% if trade.state == 'sent' %}⏳ In Attesa di Risposta
+                    {% elif trade.state == 'accepted' %}✅ Scambio Accettato
+                    {% elif trade.state == 'completed' %}🎉 Scambio Completato
+                    {% elif trade.state == 'declined' %}❌ Scambio Rifiutato
+                    {% elif trade.state == 'cancelled' %}🚫 Scambio Annullato
+                    {% endif %}
+                </h4>
+                <p class="mb-0">Data: {{ trade.created_at|date:"d/m/Y H:i" }}</p>
+            </div>
+        </div>
+    </div>
 
-@admin.register(TradeFeedback)
-class TradeFeedbackAdmin(admin.ModelAdmin):
-    list_display = ("id", "trade", "rater", "ratee", "rating", "created_at")
-    list_filter = ("rating",)
+    <!-- Dettagli Scambio -->
+    <div class="row mb-4">
+        <!-- Annuncio Offerto -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5>📤 {{ trade.from_user.username }} Offre</h5>
+                </div>
+                <div class="card-body">
+                    {% if trade.offer_item.image_set.first %}
+                        <img src="{{ trade.offer_item.image_set.first.file.url }}" alt="{{ trade.offer_item.title }}" 
+                             class="img-fluid mb-3 rounded" style="max-height: 200px; width: 100%; object-fit: cover;">
+                    {% endif %}
+                    <h6><a href="{{ trade.offer_item.get_absolute_url }}" target="_blank">{{ trade.offer_item.title }}</a></h6>
+                    <p><strong>Prezzo:</strong> {{ trade.offer_item.price|floatformat:0 }}€</p>
+                    {% if trade.offer_item.description %}
+                        <p class="text-muted small">{{ trade.offer_item.description|truncatewords:15 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Annuncio Richiesto -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5>📥 {{ trade.to_user.username }} Riceve</h5>
+                </div>
+                <div class="card-body">
+                    {% if trade.want_item.image_set.first %}
+                        <img src="{{ trade.want_item.image_set.first.file.url }}" alt="{{ trade.want_item.title }}" 
+                             class="img-fluid mb-3 rounded" style="max-height: 200px; width: 100%; object-fit: cover;">
+                    {% endif %}
+                    <h6><a href="{{ trade.want_item.get_absolute_url }}" target="_blank">{{ trade.want_item.title }}</a></h6>
+                    <p><strong>Prezzo:</strong> {{ trade.want_item.price|floatformat:0 }}€</p>
+                    {% if trade.want_item.description %}
+                        <p class="text-muted small">{{ trade.want_item.description|truncatewords:15 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Messaggio -->
+    {% if trade.message %}
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>💬 Messaggio di {{ trade.from_user.username }}</h5>
+                </div>
+                <div class="card-body">
+                    <p>{{ trade.message|linebreaks }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Azioni -->
+    {% if trade.state == 'sent' %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>⚡ Azioni Disponibili</h5>
+                    </div>
+                    <div class="card-body text-center">
+                        {% if user == trade.to_user %}
+                            <form method="post" action="{% url 'trade:action' trade.pk 'accept' %}" style="display:inline; margin-right: 10px;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success btn-lg"
+                                        onclick="return confirm('✅ Accettare questo scambio?')">
+                                    ✅ Accetta Scambio
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'trade:action' trade.pk 'decline' %}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-danger btn-lg"
+                                        onclick="return confirm('❌ Sei sicuro di rifiutare questo scambio?')">
+                                    ❌ Rifiuta
+                                </button>
+                            </form>
+                        {% elif user == trade.from_user %}
+                            <p class="text-muted">In attesa di risposta da {{ trade.to_user.username }}...</p>
+                            <form method="post" action="{% url 'trade:action' trade.pk 'cancel' %}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-warning"
+                                        onclick="return confirm('🚫 Annullare la proposta?')">
+                                    🚫 Annulla Proposta
+                                </button>
+                            </form>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% elif trade.state == 'accepted' %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="alert alert-success text-center">
+                    <h4>✅ Scambio Accettato!</h4>
+                    <p>Contattate tra voi per organizzare lo scambio fisico.</p>
+                    <form method="post" action="{% url 'trade:action' trade.pk 'complete' %}" style="display:inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary btn-lg"
+                                onclick="return confirm('🎉 Confermare che lo scambio è avvenuto?')">
+                            🎉 Scambio Completato
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    {% elif trade.state == 'completed' %}
+        <!-- Feedback Section -->
+        {% if feedback_form %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card border-warning">
+                    <div class="card-header bg-warning">
+                        <h5>⭐ Lascia un Feedback</h5>
+                    </div>
+                    <div class="card-body">
+                        <form method="post" action="{% url 'trade:feedback' trade.pk %}">
+                            {% csrf_token %}
+                            <div class="form-group">
+                                {{ feedback_form.rating.label_tag }}
+                                {{ feedback_form.rating }}
+                            </div>
+                            <div class="form-group">
+                                {{ feedback_form.comment.label_tag }}
+                                {{ feedback_form.comment }}
+                            </div>
+                            <button type="submit" class="btn btn-warning btn-block">⭐ Invia Valutazione</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% elif my_feedback %}
+        <div class="alert alert-info">
+            <h5>⭐ Il Tuo Feedback</h5>
+            <p><strong>Voto:</strong> {{ my_feedback.rating }}/5 ⭐</p>
+            {% if my_feedback.comment %}
+                <p><strong>Commento:</strong> {{ my_feedback.comment }}</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    {% endif %}
+
+    <!-- Navigation -->
+    <div class="text-center">
+        {% if user == trade.to_user %}
+            <a href="{% url 'trade:inbox' %}" class="btn btn-secondary">← Torna agli Scambi Ricevuti</a>
+        {% else %}
+            <a href="{% url 'trade:sent' %}" class="btn btn-secondary">← Torna agli Scambi Inviati</a>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
 ```
 
 
-### trade/apps.py
+### templates/trade/inbox.html
 
-```python
-from django.apps import AppConfig
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
 
+{% block title %}Scambi Ricevuti{% endblock %}
 
-class TradeConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'trade'
+{% block body %}
+<div class="container">
+    <h3>📥 Scambi Ricevuti {% if pending_count %}<span class="badge badge-warning">{{ pending_count }}</span>{% endif %}</h3>
+    
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <a href="{% url 'trade:inbox' %}" class="btn btn-primary">📥 Ricevuti</a>
+            <a href="{% url 'trade:sent' %}" class="btn btn-outline-secondary">📤 Inviati</a>
+        </div>
+    </div>
+
+    {% if trades %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Da</th>
+                        <th>Offre</th>
+                        <th>Per</th>
+                        <th>Stato</th>
+                        <th>Data</th>
+                        <th>Azioni</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in trades %}
+                    <tr>
+                        <td>
+                            <strong>{{ trade.from_user.username }}</strong>
+                        </td>
+                        <td>
+                            <a href="{{ trade.offer_item.get_absolute_url }}">{{ trade.offer_item.title }}</a>
+                        </td>
+                        <td>
+                            <a href="{{ trade.want_item.get_absolute_url }}">{{ trade.want_item.title }}</a>
+                        </td>
+                        <td>
+                            {% if trade.state == 'sent' %}
+                                <span class="badge badge-warning">⏳ {{ trade.get_state_display }}</span>
+                            {% elif trade.state == 'accepted' %}
+                                <span class="badge badge-success">✅ {{ trade.get_state_display }}</span>
+                            {% elif trade.state == 'declined' %}
+                                <span class="badge badge-danger">❌ {{ trade.get_state_display }}</span>
+                            {% elif trade.state == 'completed' %}
+                                <span class="badge badge-info">🎉 {{ trade.get_state_display }}</span>
+                            {% else %}
+                                <span class="badge badge-secondary">{{ trade.get_state_display }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ trade.created_at|date:"d/m/Y" }}</td>
+                        <td>
+                            {% if trade.state == 'sent' %}
+                                <div class="btn-group btn-group-sm">
+                                    <form method="post" action="{% url 'trade:action' trade.pk 'accept' %}" style="display:inline;">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-success btn-sm"
+                                                onclick="return confirm('✅ Accettare questo scambio?')">
+                                            ✅ Accetta
+                                        </button>
+                                    </form>
+                                    <form method="post" action="{% url 'trade:action' trade.pk 'decline' %}" style="display:inline;">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-danger btn-sm"
+                                                onclick="return confirm('❌ Rifiutare questo scambio?')">
+                                            ❌ Rifiuta
+                                        </button>
+                                    </form>
+                                </div>
+                            {% elif trade.state == 'accepted' %}
+                                <form method="post" action="{% url 'trade:action' trade.pk 'complete' %}" style="display:inline;">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-primary btn-sm"
+                                            onclick="return confirm('🎉 Completare questo scambio?')">
+                                        🎉 Completa
+                                    </button>
+                                </form>
+                            {% endif %}
+                            
+                            {% if trade.message %}
+                                <button class="btn btn-info btn-sm" title="{{ trade.message }}" 
+                                        data-toggle="tooltip" data-placement="top">💬</button>
+                            {% endif %}
+                            
+                            <a href="{% url 'trade:detail' trade.pk %}" class="btn btn-secondary btn-sm">
+                                👁️ Dettagli
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if is_paginated %}
+        <div class="text-center">
+            <div class="pagination">
+                {% if page_obj.has_previous %}
+                    <a href="?page={{ page_obj.previous_page_number }}">&laquo; Precedente</a>
+                {% endif %}
+                
+                Pagina {{ page_obj.number }} di {{ page_obj.paginator.num_pages }}
+                
+                {% if page_obj.has_next %}
+                    <a href="?page={{ page_obj.next_page_number }}">Successiva &raquo;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+    {% else %}
+        <div class="alert alert-info">
+            <h4>📭 Nessuno Scambio Ricevuto</h4>
+            <p>Non hai ancora ricevuto proposte di scambio.</p>
+            <a href="{% url 'django_classified:index' %}" class="btn btn-primary">Esplora Annunci</a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
 ```
 
 
-### trade/models.py
+### templates/trade/propose.html
 
-```python
-from django.db import models
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n widget_tweaks %}
 
-# Create your models here.
-from django.conf import settings
-from django.db import models
-from django_fsm import FSMField, transition
+{% block title %}Proponi Scambio{% endblock %}
 
-# NB: il modello degli annunci del pacchetto django_classified si chiama "Item"
-from django_classified.models import Item
+{% block body %}
+<div class="container" style="max-width: 800px;">
+    <h3>🔄 Proponi uno Scambio</h3>
+    
+    <!-- Annuncio target -->
+    <div class="card mb-4">
+        <div class="card-header bg-info text-white">
+            <h5>📝 Annuncio Richiesto</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3">
+                    {% if want_item.image %}
+                        <img src="{{ want_item.image.url }}" alt="{{ want_item.title }}" class="img-fluid rounded">
+                    {% else %}
+                        <div class="bg-light p-3 text-center rounded">Nessuna Immagine</div>
+                    {% endif %}
+                </div>
+                <div class="col-md-9">
+                    <h5>{{ want_item.title }}</h5>
+                    <p><strong>Proprietario:</strong> {{ want_item.user.username }}</p>
+                    <p><strong>Prezzo:</strong> {{ want_item.price }}{{ want_item.currency }}</p>
+                    {% if want_item.description %}
+                        <p class="text-muted">{{ want_item.description|truncatewords:20 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
 
-class TradeProposal(models.Model):
-    STATE_SENT = "sent"
-    STATE_ACCEPTED = "accepted"
-    STATE_DECLINED = "declined"
-    STATE_CANCELLED = "cancelled"
-    STATE_COMPLETED = "completed"
+    {% if not has_items %}
+        <!-- Nessun annuncio disponibile -->
+        <div class="alert alert-warning">
+            <h4>⚠️ Nessun Annuncio Disponibile</h4>
+            <p>Non hai annunci attivi da offrire per questo scambio.</p>
+            <a href="{% url 'django_classified:item-new' %}" class="btn btn-success">✨ Pubblica un Annuncio</a>
+            <a href="{{ want_item.get_absolute_url }}" class="btn btn-secondary">↩️ Torna all'Annuncio</a>
+        </div>
+    {% else %}
+        <!-- Form proposta -->
+        <form method="post">
+            {% csrf_token %}
+            
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>🎁 I Tuoi Annunci</h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="{{ form.offer_item.id_for_label }}">Seleziona cosa vuoi offrire:</label>
+                        {{ form.offer_item|add_class:"form-control form-control-lg" }}
+                        {% if form.offer_item.errors %}
+                            <div class="text-danger">{{ form.offer_item.errors }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
 
-    STATE_CHOICES = [
-        (STATE_SENT, "Sent"),
-        (STATE_ACCEPTED, "Accepted"),
-        (STATE_DECLINED, "Declined"),
-        (STATE_CANCELLED, "Cancelled"),
-        (STATE_COMPLETED, "Completed"),
-    ]
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>💬 Messaggio</h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="{{ form.message.id_for_label }}">Messaggio per {{ want_item.user.username }} (opzionale):</label>
+                        {{ form.message|add_class:"form-control" }}
+                        {% if form.message.errors %}
+                            <div class="text-danger">{{ form.message.errors }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
 
-    from_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="proposals_sent"
-    )
-    to_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="proposals_received"
-    )
-
-    offer_item = models.ForeignKey(
-        Item, on_delete=models.PROTECT, related_name="trade_offers"
-    )  # annuncio dell'offerente
-    want_item = models.ForeignKey(
-        Item, on_delete=models.PROTECT, related_name="trade_targets"
-    )  # annuncio del destinatario
-
-    message = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    state = FSMField(default=STATE_SENT, choices=STATE_CHOICES, protected=True)
-
-    class Meta:
-        constraints = [
-            # Non puoi proporre uno scambio a te stesso
-            models.CheckConstraint(
-                check=~models.Q(from_user=models.F("to_user")), name="tp_users_distinct"
-            ),
-            # Non puoi scambiare lo stesso annuncio con se stesso
-            models.CheckConstraint(
-                check=~models.Q(offer_item=models.F("want_item")), name="tp_items_distinct"
-            ),
-        ]
-        indexes = [
-            models.Index(fields=["to_user", "state"]),
-            models.Index(fields=["from_user", "state"]),
-        ]
-
-    def __str__(self):
-        return f"{self.from_user} → {self.to_user} | {self.offer_item_id} ↔ {self.want_item_id} [{self.state}]"
-
-    # Transizioni (i permessi/ownership li verifichiamo nelle view)
-    @transition(field=state, source=STATE_SENT, target=STATE_ACCEPTED)
-    def accept(self): pass
-
-    @transition(field=state, source=STATE_SENT, target=STATE_DECLINED)
-    def decline(self): pass
-
-    @transition(field=state, source=[STATE_SENT, STATE_ACCEPTED], target=STATE_CANCELLED)
-    def cancel(self): pass
-
-    @transition(field=state, source=STATE_ACCEPTED, target=STATE_COMPLETED)
-    def complete(self): pass
-
-
-class TradeFeedback(models.Model):
-    trade = models.OneToOneField(TradeProposal, on_delete=models.CASCADE, related_name="feedback")
-    rater = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    ratee = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="ratings_received")
-    rating = models.PositiveSmallIntegerField()  # 1..5
-    comment = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+            <!-- Bottoni -->
+            <div class="text-center">
+                <button type="submit" class="btn btn-success btn-lg">
+                    📤 Invia Proposta di Scambio
+                </button>
+                <a href="{{ want_item.get_absolute_url }}" class="btn btn-secondary btn-lg">
+                    ❌ Annulla
+                </a>
+            </div>
+        </form>
+    {% endif %}
+</div>
+{% endblock %}
 ```
 
 
-### trade/urls.py
+### templates/trade/sent.html
 
-```python
-from django.urls import path
-from . import views
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
 
-app_name = "trade"
+{% block title %}Scambi Inviati{% endblock %}
 
-urlpatterns = [
-    path("inbox/", views.InboxTradesView.as_view(), name="inbox"),
-    path("sent/", views.SentTradesView.as_view(), name="sent"),
-    path("propose/<int:item_id>/", views.ProposeTradeView.as_view(), name="propose"),
-    path("<int:pk>/accept/", views.AcceptTradeView.as_view(), name="accept"),
-    path("<int:pk>/decline/", views.DeclineTradeView.as_view(), name="decline"),
-    path("<int:pk>/cancel/", views.CancelTradeView.as_view(), name="cancel"),
-    path("<int:pk>/complete/", views.CompleteTradeView.as_view(), name="complete"),
-]
-```
+{% block body %}
+<div class="container">
+    <h3>📤 Scambi Inviati</h3>
+    
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <a href="{% url 'trade:inbox' %}" class="btn btn-outline-secondary">📥 Ricevuti</a>
+            <a href="{% url 'trade:sent' %}" class="btn btn-primary">📤 Inviati</a>
+        </div>
+    </div>
 
-
-### trade/views.py
-
-```python
-from django.shortcuts import render
-
-from django.views import View
-from django.views.generic import ListView
-from django.shortcuts import render, get_object_or_404, redirect
-from django.contrib.auth.mixins import LoginRequiredMixin
-from django.http import HttpResponseForbidden
-from django.contrib import messages
-
-from .models import TradeProposal
-try:
-    # modello Annunci del pacchetto classified
-    from django_classified.models import Item
-except Exception:
-    Item = None  # fallback per sviluppo
-
-# Inbox (ricevuti)
-class InboxTradesView(LoginRequiredMixin, ListView):
-    template_name = "trade/list.html"
-    context_object_name = "trades"
-
-    def get_queryset(self):
-        return TradeProposal.objects.filter(to_user=self.request.user).order_by("-created_at")
-
-# Inviati
-class SentTradesView(LoginRequiredMixin, ListView):
-    template_name = "trade/list.html"
-    context_object_name = "trades"
-
-    def get_queryset(self):
-        return TradeProposal.objects.filter(from_user=self.request.user).order_by("-created_at")
-
-# Proponi scambio
-class ProposeTradeView(LoginRequiredMixin, View):
-    def get(self, request, item_id):
-        want_item = get_object_or_404(Item, pk=item_id)
-        if want_item.user == request.user:
-            return HttpResponseForbidden("Non puoi proporre scambi a te stesso.")
-        return render(request, "trade/propose.html", {"want_item": want_item})
-
-    def post(self, request, item_id):
-        want_item = get_object_or_404(Item, pk=item_id)
-        if want_item.user == request.user:
-            return HttpResponseForbidden("Non puoi proporre scambi a te stesso.")
-        # versione minima: crea una finta proposta per test
-        # (sostituisci con il form reale appena pronto)
-        offer_item_id = request.POST.get("offer_item_id")
-        offer_item = get_object_or_404(Item, pk=offer_item_id, user=request.user)
-        TradeProposal.objects.create(
-            from_user=request.user,
-            to_user=want_item.user,
-            offer_item=offer_item,
-            want_item=want_item,
-            message=request.POST.get("message", "")
-        )
-        messages.success(request, "Proposta inviata.")
-        return redirect("trade:sent")
-
-# Azioni di stato (stub, POST-only)
-class AcceptTradeView(LoginRequiredMixin, View):
-    def post(self, request, pk):
-        tp = get_object_or_404(TradeProposal, pk=pk, to_user=request.user)
-        tp.accept(); tp.save()
-        messages.success(request, "Proposta accettata.")
-        return redirect("trade:inbox")
-
-class DeclineTradeView(LoginRequiredMixin, View):
-    def post(self, request, pk):
-        tp = get_object_or_404(TradeProposal, pk=pk, to_user=request.user)
-        tp.decline(); tp.save()
-        messages.info(request, "Proposta rifiutata.")
-        return redirect("trade:inbox")
-
-class CancelTradeView(LoginRequiredMixin, View):
-    def post(self, request, pk):
-        tp = get_object_or_404(TradeProposal, pk=pk)
-        if tp.from_user != request.user and tp.to_user != request.user:
-            return HttpResponseForbidden()
-        tp.cancel(); tp.save()
-        messages.warning(request, "Proposta annullata.")
-        return redirect("trade:sent")
-
-class CompleteTradeView(LoginRequiredMixin, View):
-    def post(self, request, pk):
-        tp = get_object_or_404(TradeProposal, pk=pk)
-        if tp.from_user != request.user and tp.to_user != request.user:
-            return HttpResponseForbidden()
-        tp.complete(); tp.save()
-        messages.success(request, "Scambio completato.")
-        return redirect("trade:inbox")
+    {% if trades %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>A</th>
+                        <th>Ho Offerto</th>
+                        <th>Per</th>
+                        <th>Stato</th>
+                        <th>Data</th>
+                        <th>Azioni</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in trades %}
+                    <tr>
+                        <td><strong>{{ trade.to_user.username }}</strong></td>
+                        <td><a href="{{ trade.offer_item.get_absolute_url }}">{{ trade.offer_item.title }}</a></td>
+                        <td><a href="{{ trade.want_item.get_absolute_url }}">{{ trade.want_item.title }}</a></td>
+                        <td>
+                            {% if trade.state == 'sent' %}
+                                <span class="badge badge-warning">⏳ In Attesa</span>
+                            {% elif trade.state == 'accepted' %}
+                                <span class="badge badge-success">✅ Accettata</span>
+                            {% elif trade.state == 'declined' %}
+                                <span class="badge badge-danger">❌ Rifiutata</span>
+                            {% elif trade.state == 'completed' %}
+                                <span class="badge badge-info">🎉 Completata</span>
+                            {% elif trade.state == 'cancelled' %}
+                                <span class="badge badge-secondary">🚫 Annullata</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ trade.created_at|date:"d/m/Y" }}</td>
+                        <td>
+                            {% if trade.state == 'sent' or trade.state == 'accepted' %}
+                                <form method="post" action="{% url 'trade:action' trade.pk 'cancel' %}" style="display:inline;">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-warning btn-sm"
+                                            onclick="return confirm('🚫 Annullare questo scambio?')">
+                                        🚫 Annulla
+                                    </button>
+                                </form>
+                            {% endif %}
+                            
+                            {% if trade.state == 'accepted' %}
+                                <form method="post" action="{% url 'trade:action' trade.pk 'complete' %}" style="display:inline;">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-primary btn-sm"
+                                            onclick="return confirm('🎉 Completare questo scambio?')">
+                                        🎉 Completa
+                                    </button>
+                                </form>
+                            {% endif %}
+                            
+                            <a href="{% url 'trade:detail' trade.pk %}" class="btn btn-secondary btn-sm">
+                                👁️ Dettagli
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="alert alert-info">
+            <h4>📭 Nessuna Proposta Inviata</h4>
+            <p>Non hai ancora inviato proposte di scambio.</p>
+            <a href="{% url 'django_classified:index' %}" class="btn btn-primary">Cerca Annunci da Scambiare</a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
 ```

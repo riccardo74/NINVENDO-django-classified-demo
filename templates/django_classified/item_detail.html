@@ -40,7 +40,12 @@
 
     <div class="row">
       <div class="col-lg-9">
-        <h2 itemprop="name">{{ object.title }}</h2>
+        <h2 itemprop="name">
+          {{ object.title }}
+          {% if not object.is_active %}
+            <span class="badge badge-warning">🔒 Riservato</span>
+          {% endif %}
+        </h2>
       </div>
       <div class="col-lg-3">
                 <span itemprop="offers" itemscope itemtype="http://schema.org/Offer">
@@ -51,52 +56,65 @@
     </div>
 
     <!-- ⭐ NUOVA SEZIONE BARATTO E ACQUISTO - AGGIUNTA QUI -->
-    {% if user.is_authenticated and user != object.user %}
-      <div class="row" style="margin: 20px 0;">
-        <div class="col-lg-12">
-          <div class="alert alert-success" style="border: 2px solid #28a745;">
-            <div class="row">
-              <div class="col-md-7">
-                <h4 style="margin-top: 5px;">💰 Come vuoi ottenere questo articolo?</h4>
-                <p class="mb-2">Puoi acquistarlo direttamente o proporre uno scambio!</p>
-              </div>
-              <div class="col-md-5 text-right">
-                <div class="btn-group" style="margin-bottom: 8px;">
-                  <a href="{% url 'trade:propose' object.pk %}" class="btn btn-warning btn-lg">
-                    🔄 Proponi Scambio
-                  </a>
-                  {% if object.contact_phone or object.user.email %}
-                    <a href="mailto:{{ object.user.email }}?subject=Voglio acquistare {{ object.title }}&body=Ciao {{ object.user.username }}, sono interessato ad acquistare il tuo annuncio '{{ object.title }}' al prezzo di {{ object.price|currency }}. Quando possiamo sentirci?" 
-                       class="btn btn-success btn-lg">
-                      💰 Acquista ({{ object.price|currency }})
-                    </a>
-                  {% endif %}
+    {% if object.is_active %}
+      {% if user.is_authenticated and user != object.user %}
+        <div class="row" style="margin: 20px 0;">
+          <div class="col-lg-12">
+            <div class="alert alert-success" style="border: 2px solid #28a745;">
+              <div class="row">
+                <div class="col-md-7">
+                  <h4 style="margin-top: 5px;">💰 Come vuoi ottenere questo articolo?</h4>
+                  <p class="mb-2">Puoi acquistarlo direttamente o proporre uno scambio!</p>
                 </div>
-                <br>
-                <div class="btn-group">
-                  {% if object.contact_phone or object.user.email %}
-                    <a href="mailto:{{ object.user.email }}?subject=Domanda su {{ object.title }}" 
-                       class="btn btn-primary">
-                      📧 Fai una Domanda
+                <div class="col-md-5 text-right">
+                  <div class="btn-group" style="margin-bottom: 8px;">
+                    <a href="{% url 'trade:propose' object.pk %}" class="btn btn-warning btn-lg">
+                      🔄 Proponi Scambio
                     </a>
-                  {% endif %}
-                  {% if object.contact_phone and not DCF.LOGIN_TO_CONTACT %}
-                    <a href="tel:{{ object.contact_phone }}" class="btn btn-info">
-                      📞 {{ object.contact_phone }}
-                    </a>
-                  {% endif %}
+                    {% if object.contact_phone or object.user.email %}
+                      <a href="mailto:{{ object.user.email }}?subject=Voglio acquistare {{ object.title }}&body=Ciao {{ object.user.username }}, sono interessato ad acquistare il tuo annuncio '{{ object.title }}' al prezzo di {{ object.price|currency }}. Quando possiamo sentirci?" 
+                         class="btn btn-success btn-lg">
+                        💰 Acquista ({{ object.price|currency }})
+                      </a>
+                    {% endif %}
+                  </div>
+                  <br>
+                  <div class="btn-group">
+                    {% if object.contact_phone or object.user.email %}
+                      <a href="mailto:{{ object.user.email }}?subject=Domanda su {{ object.title }}" 
+                         class="btn btn-primary">
+                        📧 Fai una Domanda
+                      </a>
+                    {% endif %}
+                    {% if object.contact_phone and not DCF.LOGIN_TO_CONTACT %}
+                      <a href="tel:{{ object.contact_phone }}" class="btn btn-info">
+                        📞 {{ object.contact_phone }}
+                      </a>
+                    {% endif %}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    {% elif not user.is_authenticated %}
+      {% elif not user.is_authenticated %}
+        <div class="row" style="margin: 20px 0;">
+          <div class="col-lg-12">
+            <div class="alert alert-info">
+              <strong>💡 Interessato a questo annuncio?</strong> 
+              <a href="{% url 'login' %}" class="btn btn-primary">Accedi</a> per acquistare o proporre scambi.
+            </div>
+          </div>
+        </div>
+      {% endif %}
+    {% else %}
+      <!-- Annuncio non più disponibile -->
       <div class="row" style="margin: 20px 0;">
         <div class="col-lg-12">
-          <div class="alert alert-info">
-            <strong>💡 Interessato a questo annuncio?</strong> 
-            <a href="{% url 'login' %}" class="btn btn-primary">Accedi</a> per acquistare o proporre scambi.
+          <div class="alert alert-warning">
+            <h4>🔒 Annuncio Riservato</h4>
+            <p>Questo annuncio non è più disponibile per acquisti o scambi.</p>
+            <p class="mb-0">Potrebbe essere stato riservato per uno scambio in corso.</p>
           </div>
         </div>
       </div>

@@ -50,26 +50,27 @@
                 <span class="glyphicon glyphicon-user"></span> {{ user.username }} <span class="caret"></span>
               </a>
               
-              <ul class="dropdown-menu">
-                    <li><a href="{% url 'django_classified:user-items' %}">{% trans "My items" %} ({{ user.item_set.count }})</a></li>
-                    <li><a href="{% url 'django_classified:profile' %}">{% trans "Profile" %}</a></li>
+            <ul class="dropdown-menu">
+                <li><a href="{% url 'django_classified:user-items' %}">{% trans "My items" %} ({{ user.item_set.count }})</a></li>
+                
+                <!-- Un solo link profilo -->
+                <li><a href="{% url 'trade:profile' %}">📝 Il Mio Profilo</a></li>
 
-                    <!-- 👇 nuovi link scambi -->
-                    <li><a href="{% url 'trade:inbox' %}">Scambi (ricevuti)</a></li>
-                    <li><a href="{% url 'trade:sent' %}">Scambi (inviati)</a></li>
-                    <!-- 👆 -->
+                <!-- Link scambi -->
+                <li><a href="{% url 'trade:inbox' %}">Scambi (ricevuti)</a></li>
+                <li><a href="{% url 'trade:sent' %}">Scambi (inviati)</a></li>
 
-                    <li class="divider"></li>
-                    <li>
-                      <form method="post" action="{% url 'logout' %}" style="margin:0; padding:0;">
+                <li class="divider"></li>
+                <li>
+                    <form method="post" action="{% url 'logout' %}" style="margin:0; padding:0;">
                         {% csrf_token %}
                         <button type="submit" class="btn btn-link" style="padding: 0; color: #337ab7;">
-                          {% trans "Logout" %}
+                            {% trans "Logout" %}
                         </button>
-                      </form>
-                    </li>
-
-
+                    </form>
+                </li>
+            </ul>
+            </li>
           {% else %}
             <li role="presentation">
               <a href="{% url 'django_classified:profile' %}" title="{% trans "Login" %}">

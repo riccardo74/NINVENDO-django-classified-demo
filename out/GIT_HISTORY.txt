@@ -1,3 +1,4 @@
+1adefaf | 2025-09-01 | riccardo74 | Add project snapshot and trade module integration
 1c788d0 | 2025-08-31 | riccardo74 | Move registration templates and add base.html bridge
 eff7548 | 2025-08-31 | riccardo74 | Add trade (barter) module with user proposals
 1f7483b | 2025-08-31 | riccardo74 | Add NINVENDO branding and dynamic site config support
@@ -47,4 +48,3 @@ d73b732 | 2020-04-01 | Sergey Lyapustin | Merge pull request #96 from slyapustin
 1a02004 | 2020-03-04 | Sergey Lyapustin | Merge pull request #95 from slyapustin/pyup-update-django-3.0.3-to-3.0.4
 2842e25 | 2020-03-04 | pyup-bot | Update django from 3.0.3 to 3.0.4
 2c1e571 | 2020-03-04 | Sergey Lyapustin | Update README.md
-079afd6 | 2020-02-23 | Sergey Lyapustin | Removed email/password auth as it required a bit more work in order to make it secure.

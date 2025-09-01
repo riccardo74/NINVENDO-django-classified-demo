@@ -3,7 +3,7 @@ from django.db import models
 from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
-from django_fsm import FSMField
+from django_fsm import FSMField, transition
 from django.core.exceptions import ValidationError
 
 # Logging per tracciare azioni
@@ -12,16 +12,6 @@ logger = logging.getLogger(__name__)
 
 # NB: il modello degli annunci del pacchetto django_classified si chiama "Item"
 from django_classified.models import Item
-
-
-# Aggiungi questo import all'inizio del file trade/models.py
-from .user_profile import UserProfile
-
-# Aggiungi questo metodo alla classe UserTradeProfile esistente
-def get_user_profile(self):
-    """Ottieni il profilo esteso dell'utente"""
-    profile, created = UserProfile.objects.get_or_create(user=self.user)
-    return profile
 
 class TradeProposal(models.Model):
     STATE_SENT = "sent"
@@ -61,8 +51,7 @@ class TradeProposal(models.Model):
     is_counter_offer = models.BooleanField(default=False)
     parent_proposal = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE)
 
-    # ⭐ USIAMO CharField INVECE DI FSMField
-    state = models.CharField(max_length=20, choices=STATE_CHOICES, default=STATE_SENT)
+    state = FSMField(default=STATE_SENT, choices=STATE_CHOICES, protected=True)
 
     class Meta:
         constraints = [
@@ -91,39 +80,37 @@ class TradeProposal(models.Model):
         if not self.expires_at and self.state == self.STATE_SENT:
             self.expires_at = timezone.now() + timedelta(days=7)
         super().save(*args, **kwargs)
+        
+        # GESTIONE PROPOSTE MULTIPLE: Se accetto una proposta, rifiuto automaticamente le altre
+        if self.state == self.STATE_ACCEPTED and self.pk:
+            print(f"🔥 SAVE: Stato è ACCEPTED, chiamando cancel_competing_proposals()")
+            self.cancel_competing_proposals()
 
     def cancel_competing_proposals(self):
         """
         Quando una proposta viene accettata, annulla automaticamente 
         tutte le altre proposte pendenti per gli stessi annunci
         """
-        print(f"🔥 CANCEL_COMPETING: Cercando proposte concorrenti per Trade {self.id}")
+        print(f"🔥 CANCEL_COMPETING: Cercando proposte concorrenti")
         
         # Trova proposte concorrenti per l'annuncio offerto
-        competing_for_offer = list(TradeProposal.objects.filter(
+        competing_for_offer = TradeProposal.objects.filter(
             want_item=self.offer_item,
             state=self.STATE_SENT
-        ).exclude(pk=self.pk))
+        ).exclude(pk=self.pk)
         
         # Trova proposte concorrenti per l'annuncio richiesto
-        competing_for_want = list(TradeProposal.objects.filter(
+        competing_for_want = TradeProposal.objects.filter(
             want_item=self.want_item,
             state=self.STATE_SENT
-        ).exclude(pk=self.pk))
+        ).exclude(pk=self.pk)
         
-        # Combina le liste (invece di union)
-        all_competing = competing_for_offer + competing_for_want
-        # Rimuovi duplicati se ce ne sono
-        seen_ids = set()
-        unique_competing = []
+        # Annulla tutte le proposte concorrenti
+        all_competing = competing_for_offer.union(competing_for_want)
+        
+        print(f"🔥 CANCEL_COMPETING: Trovate {all_competing.count()} proposte da annullare")
+        
         for proposal in all_competing:
-            if proposal.id not in seen_ids:
-                unique_competing.append(proposal)
-                seen_ids.add(proposal.id)
-        
-        print(f"🔥 CANCEL_COMPETING: Trovate {len(unique_competing)} proposte da annullare")
-        
-        for proposal in unique_competing:
             proposal.state = self.STATE_CANCELLED
             proposal.save(update_fields=['state'])
             logger.info(f"Trade {proposal.id}: Automaticamente annullata per conflitto con Trade {self.id}")
@@ -158,14 +145,10 @@ class TradeProposal(models.Model):
         """Entrambi possono completare se accettata"""
         return user in [self.from_user, self.to_user] and self.state == self.STATE_ACCEPTED
 
-    # ⭐ METODI MANUALI (NON PIÙ FSM) CON LOGICA COMPLETA
+    # TRANSIZIONI FSM CON DEBUG E GESTIONE AUTOMATICA DEGLI ITEM
+    @transition(field=state, source=STATE_SENT, target=STATE_ACCEPTED)
     def accept(self):
-        """Accetta la proposta e disattiva gli annunci"""
-        print(f"🔥🔥🔥 ACCEPT MANUALE CHIAMATO! Trade {self.id} 🔥🔥🔥")
-        
-        # Verifica stato
-        if self.state != self.STATE_SENT:
-            raise ValidationError(f"Non puoi accettare una proposta in stato '{self.state}'")
+        print(f"🔥🔥🔥 ACCEPT CHIAMATO! Trade {self.id} 🔥🔥🔥")
         
         try:
             # Log dell'azione
@@ -180,18 +163,14 @@ class TradeProposal(models.Model):
             print(f"   - offer_item({self.offer_item.id}).is_active = {self.offer_item.is_active}")
             print(f"   - want_item({self.want_item.id}).is_active = {self.want_item.is_active}")
             
-            # ⭐ CAMBIA STATO PRIMA DI TUTTO
-            self.state = self.STATE_ACCEPTED
-            print(f"🔥 Stato cambiato in: {self.state}")
-            
-            # ⭐ DISATTIVA GLI ANNUNCI COINVOLTI (RISERVATI)
+            # DISATTIVA GLI ANNUNCI COINVOLTI (RISERVATI)
             self.offer_item.is_active = False
-            self.offer_item.save(update_fields=['is_active'])
-            print(f"🔥 offer_item disattivato")
+            saved_offer = self.offer_item.save(update_fields=['is_active'])
+            print(f"🔥 offer_item.save() completato. Risultato: {saved_offer}")
             
             self.want_item.is_active = False  
-            self.want_item.save(update_fields=['is_active'])
-            print(f"🔥 want_item disattivato")
+            saved_want = self.want_item.save(update_fields=['is_active'])
+            print(f"🔥 want_item.save() completato. Risultato: {saved_want}")
             
             # Verifica che le modifiche siano state applicate
             self.offer_item.refresh_from_db()
@@ -200,9 +179,6 @@ class TradeProposal(models.Model):
             print(f"🔥 DOPO la modifica (refresh dal DB):")
             print(f"   - offer_item({self.offer_item.id}).is_active = {self.offer_item.is_active}")
             print(f"   - want_item({self.want_item.id}).is_active = {self.want_item.is_active}")
-            
-            # ⭐ ANNULLA PROPOSTE CONCORRENTI
-            self.cancel_competing_proposals()
             
             logger.info(f"Trade {self.id}: Annunci {self.offer_item.id} e {self.want_item.id} disattivati (riservati)")
             print(f"🔥 ACCEPT completato con successo per Trade {self.id}")
@@ -215,31 +191,22 @@ class TradeProposal(models.Model):
             logger.error(f"ERRORE in Trade.accept(): {e}")
             raise
 
+    @transition(field=state, source=STATE_SENT, target=STATE_DECLINED)
     def decline(self):
-        """Rifiuta la proposta"""
         print(f"🔥 DECLINE chiamato per Trade {self.id}")
-        
-        if self.state != self.STATE_SENT:
-            raise ValidationError(f"Non puoi rifiutare una proposta in stato '{self.state}'")
-        
-        self.state = self.STATE_DECLINED
         logger.info(f"Trade {self.id}: {self.to_user} ha rifiutato proposta da {self.from_user}")
+        # Gli annunci rimangono attivi
         print(f"🔥 DECLINE completato per Trade {self.id}")
 
+    @transition(field=state, source=[STATE_SENT, STATE_ACCEPTED], target=STATE_CANCELLED)
     def cancel(self):
-        """Annulla la proposta"""
         print(f"🔥 CANCEL chiamato per Trade {self.id}, stato attuale: {self.state}")
-        
-        if self.state not in [self.STATE_SENT, self.STATE_ACCEPTED]:
-            raise ValidationError(f"Non puoi annullare una proposta in stato '{self.state}'")
+        logger.info(f"Trade {self.id}: Proposta annullata")
         
         try:
-            old_state = self.state
-            self.state = self.STATE_CANCELLED
-            
-            # ⭐ RIATTIVA GLI ANNUNCI SE ERANO STATI DISATTIVATI
-            if old_state == self.STATE_ACCEPTED:
-                print(f"🔥 Stato era ACCEPTED, riattivando annunci")
+            # RIATTIVA GLI ANNUNCI SE ERANO STATI DISATTIVATI
+            if self.state == self.STATE_ACCEPTED:
+                print(f"🔥 Stato è ACCEPTED, riattivando annunci")
                 
                 self.offer_item.refresh_from_db()
                 self.want_item.refresh_from_db()
@@ -260,23 +227,16 @@ class TradeProposal(models.Model):
                 
                 logger.info(f"Trade {self.id}: Annunci {self.offer_item.id} e {self.want_item.id} riattivati")
             else:
-                print(f"🔥 Stato non era ACCEPTED, annunci non riattivati")
-                
-            logger.info(f"Trade {self.id}: Proposta annullata")
+                print(f"🔥 Stato non è ACCEPTED, annunci non riattivati")
                 
         except Exception as e:
             print(f"🔥🔥🔥 ERRORE in cancel(): {e} 🔥🔥🔥")
             logger.error(f"ERRORE in Trade.cancel(): {e}")
             raise
 
+    @transition(field=state, source=STATE_ACCEPTED, target=STATE_COMPLETED)
     def complete(self):
-        """Completa lo scambio"""
         print(f"🔥 COMPLETE chiamato per Trade {self.id}")
-        
-        if self.state != self.STATE_ACCEPTED:
-            raise ValidationError(f"Non puoi completare una proposta in stato '{self.state}'")
-        
-        self.state = self.STATE_COMPLETED
         logger.info(f"Trade {self.id}: Scambio completato tra {self.from_user} e {self.to_user}")
         
         # GLI ANNUNCI RIMANGONO DISATTIVATI (SCAMBIATI DEFINITIVAMENTE)
@@ -292,33 +252,6 @@ class TradeProposal(models.Model):
             pass
         
         print(f"🔥 COMPLETE completato per Trade {self.id}")
-
-
-class TradeMessage(models.Model):
-    """Sistema di messaggistica interna per gli scambi"""
-    trade = models.ForeignKey(TradeProposal, on_delete=models.CASCADE, related_name="messages")
-    sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sent_trade_messages")
-    recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="received_trade_messages")
-    
-    message = models.TextField(max_length=1000, help_text="Messaggio per organizzare lo scambio")
-    created_at = models.DateTimeField(auto_now_add=True)
-    is_read = models.BooleanField(default=False)
-    
-    class Meta:
-        ordering = ['created_at']
-        indexes = [
-            models.Index(fields=["trade", "created_at"]),
-            models.Index(fields=["recipient", "is_read"]),
-        ]
-    
-    def __str__(self):
-        return f"Messaggio da {self.sender} a {self.recipient} per Trade #{self.trade.id}"
-    
-    def save(self, *args, **kwargs):
-        # Auto-imposta il recipient come l'altro utente nello scambio
-        if not self.recipient:
-            self.recipient = self.trade.to_user if self.sender == self.trade.from_user else self.trade.from_user
-        super().save(*args, **kwargs)
 
 
 class TradeFeedback(models.Model):
