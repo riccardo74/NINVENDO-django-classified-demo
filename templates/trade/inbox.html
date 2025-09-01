@@ -1,0 +1,123 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Scambi Ricevuti{% endblock %}
+
+{% block body %}
+<div class="container">
+    <h3>📥 Scambi Ricevuti {% if pending_count %}<span class="badge badge-warning">{{ pending_count }}</span>{% endif %}</h3>
+    
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <a href="{% url 'trade:inbox' %}" class="btn btn-primary">📥 Ricevuti</a>
+            <a href="{% url 'trade:sent' %}" class="btn btn-outline-secondary">📤 Inviati</a>
+        </div>
+    </div>
+
+    {% if trades %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Da</th>
+                        <th>Offre</th>
+                        <th>Per</th>
+                        <th>Stato</th>
+                        <th>Data</th>
+                        <th>Azioni</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in trades %}
+                    <tr>
+                        <td>
+                            <strong>{{ trade.from_user.username }}</strong>
+                        </td>
+                        <td>
+                            <a href="{{ trade.offer_item.get_absolute_url }}">{{ trade.offer_item.title }}</a>
+                        </td>
+                        <td>
+                            <a href="{{ trade.want_item.get_absolute_url }}">{{ trade.want_item.title }}</a>
+                        </td>
+                        <td>
+                            {% if trade.state == 'sent' %}
+                                <span class="badge badge-warning">⏳ {{ trade.get_state_display }}</span>
+                            {% elif trade.state == 'accepted' %}
+                                <span class="badge badge-success">✅ {{ trade.get_state_display }}</span>
+                            {% elif trade.state == 'declined' %}
+                                <span class="badge badge-danger">❌ {{ trade.get_state_display }}</span>
+                            {% elif trade.state == 'completed' %}
+                                <span class="badge badge-info">🎉 {{ trade.get_state_display }}</span>
+                            {% else %}
+                                <span class="badge badge-secondary">{{ trade.get_state_display }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ trade.created_at|date:"d/m/Y" }}</td>
+                        <td>
+                            {% if trade.state == 'sent' %}
+                                <div class="btn-group btn-group-sm">
+                                    <form method="post" action="{% url 'trade:action' trade.pk 'accept' %}" style="display:inline;">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-success btn-sm"
+                                                onclick="return confirm('✅ Accettare questo scambio?')">
+                                            ✅ Accetta
+                                        </button>
+                                    </form>
+                                    <form method="post" action="{% url 'trade:action' trade.pk 'decline' %}" style="display:inline;">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-danger btn-sm"
+                                                onclick="return confirm('❌ Rifiutare questo scambio?')">
+                                            ❌ Rifiuta
+                                        </button>
+                                    </form>
+                                </div>
+                            {% elif trade.state == 'accepted' %}
+                                <form method="post" action="{% url 'trade:action' trade.pk 'complete' %}" style="display:inline;">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-primary btn-sm"
+                                            onclick="return confirm('🎉 Completare questo scambio?')">
+                                        🎉 Completa
+                                    </button>
+                                </form>
+                            {% endif %}
+                            
+                            {% if trade.message %}
+                                <button class="btn btn-info btn-sm" title="{{ trade.message }}" 
+                                        data-toggle="tooltip" data-placement="top">💬</button>
+                            {% endif %}
+                            
+                            <a href="{% url 'trade:detail' trade.pk %}" class="btn btn-secondary btn-sm">
+                                👁️ Dettagli
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if is_paginated %}
+        <div class="text-center">
+            <div class="pagination">
+                {% if page_obj.has_previous %}
+                    <a href="?page={{ page_obj.previous_page_number }}">&laquo; Precedente</a>
+                {% endif %}
+                
+                Pagina {{ page_obj.number }} di {{ page_obj.paginator.num_pages }}
+                
+                {% if page_obj.has_next %}
+                    <a href="?page={{ page_obj.next_page_number }}">Successiva &raquo;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+    {% else %}
+        <div class="alert alert-info">
+            <h4>📭 Nessuno Scambio Ricevuto</h4>
+            <p>Non hai ancora ricevuto proposte di scambio.</p>
+            <a href="{% url 'django_classified:index' %}" class="btn btn-primary">Esplora Annunci</a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,191 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Dettagli Scambio #{{ trade.pk }}{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 900px;">
+    <h3>🔄 Scambio #{{ trade.pk }}</h3>
+    
+    <!-- Status -->
+    <div class="row mb-3">
+        <div class="col-md-12">
+            <div class="alert 
+                {% if trade.state == 'sent' %}alert-warning
+                {% elif trade.state == 'accepted' %}alert-success
+                {% elif trade.state == 'completed' %}alert-info
+                {% elif trade.state == 'declined' %}alert-danger
+                {% else %}alert-secondary{% endif %}">
+                <h4>
+                    {% if trade.state == 'sent' %}⏳ In Attesa di Risposta
+                    {% elif trade.state == 'accepted' %}✅ Scambio Accettato
+                    {% elif trade.state == 'completed' %}🎉 Scambio Completato
+                    {% elif trade.state == 'declined' %}❌ Scambio Rifiutato
+                    {% elif trade.state == 'cancelled' %}🚫 Scambio Annullato
+                    {% endif %}
+                </h4>
+                <p class="mb-0">Data: {{ trade.created_at|date:"d/m/Y H:i" }}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dettagli Scambio -->
+    <div class="row mb-4">
+        <!-- Annuncio Offerto -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5>📤 {{ trade.from_user.username }} Offre</h5>
+                </div>
+                <div class="card-body">
+                    {% if trade.offer_item.image_set.first %}
+                        <img src="{{ trade.offer_item.image_set.first.file.url }}" alt="{{ trade.offer_item.title }}" 
+                             class="img-fluid mb-3 rounded" style="max-height: 200px; width: 100%; object-fit: cover;">
+                    {% endif %}
+                    <h6><a href="{{ trade.offer_item.get_absolute_url }}" target="_blank">{{ trade.offer_item.title }}</a></h6>
+                    <p><strong>Prezzo:</strong> {{ trade.offer_item.price|floatformat:0 }}€</p>
+                    {% if trade.offer_item.description %}
+                        <p class="text-muted small">{{ trade.offer_item.description|truncatewords:15 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Annuncio Richiesto -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5>📥 {{ trade.to_user.username }} Riceve</h5>
+                </div>
+                <div class="card-body">
+                    {% if trade.want_item.image_set.first %}
+                        <img src="{{ trade.want_item.image_set.first.file.url }}" alt="{{ trade.want_item.title }}" 
+                             class="img-fluid mb-3 rounded" style="max-height: 200px; width: 100%; object-fit: cover;">
+                    {% endif %}
+                    <h6><a href="{{ trade.want_item.get_absolute_url }}" target="_blank">{{ trade.want_item.title }}</a></h6>
+                    <p><strong>Prezzo:</strong> {{ trade.want_item.price|floatformat:0 }}€</p>
+                    {% if trade.want_item.description %}
+                        <p class="text-muted small">{{ trade.want_item.description|truncatewords:15 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Messaggio -->
+    {% if trade.message %}
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>💬 Messaggio di {{ trade.from_user.username }}</h5>
+                </div>
+                <div class="card-body">
+                    <p>{{ trade.message|linebreaks }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Azioni -->
+    {% if trade.state == 'sent' %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>⚡ Azioni Disponibili</h5>
+                    </div>
+                    <div class="card-body text-center">
+                        {% if user == trade.to_user %}
+                            <form method="post" action="{% url 'trade:action' trade.pk 'accept' %}" style="display:inline; margin-right: 10px;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success btn-lg"
+                                        onclick="return confirm('✅ Accettare questo scambio?')">
+                                    ✅ Accetta Scambio
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'trade:action' trade.pk 'decline' %}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-danger btn-lg"
+                                        onclick="return confirm('❌ Sei sicuro di rifiutare questo scambio?')">
+                                    ❌ Rifiuta
+                                </button>
+                            </form>
+                        {% elif user == trade.from_user %}
+                            <p class="text-muted">In attesa di risposta da {{ trade.to_user.username }}...</p>
+                            <form method="post" action="{% url 'trade:action' trade.pk 'cancel' %}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-warning"
+                                        onclick="return confirm('🚫 Annullare la proposta?')">
+                                    🚫 Annulla Proposta
+                                </button>
+                            </form>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% elif trade.state == 'accepted' %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="alert alert-success text-center">
+                    <h4>✅ Scambio Accettato!</h4>
+                    <p>Contattate tra voi per organizzare lo scambio fisico.</p>
+                    <form method="post" action="{% url 'trade:action' trade.pk 'complete' %}" style="display:inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary btn-lg"
+                                onclick="return confirm('🎉 Confermare che lo scambio è avvenuto?')">
+                            🎉 Scambio Completato
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    {% elif trade.state == 'completed' %}
+        <!-- Feedback Section -->
+        {% if feedback_form %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card border-warning">
+                    <div class="card-header bg-warning">
+                        <h5>⭐ Lascia un Feedback</h5>
+                    </div>
+                    <div class="card-body">
+                        <form method="post" action="{% url 'trade:feedback' trade.pk %}">
+                            {% csrf_token %}
+                            <div class="form-group">
+                                {{ feedback_form.rating.label_tag }}
+                                {{ feedback_form.rating }}
+                            </div>
+                            <div class="form-group">
+                                {{ feedback_form.comment.label_tag }}
+                                {{ feedback_form.comment }}
+                            </div>
+                            <button type="submit" class="btn btn-warning btn-block">⭐ Invia Valutazione</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% elif my_feedback %}
+        <div class="alert alert-info">
+            <h5>⭐ Il Tuo Feedback</h5>
+            <p><strong>Voto:</strong> {{ my_feedback.rating }}/5 ⭐</p>
+            {% if my_feedback.comment %}
+                <p><strong>Commento:</strong> {{ my_feedback.comment }}</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    {% endif %}
+
+    <!-- Navigation -->
+    <div class="text-center">
+        {% if user == trade.to_user %}
+            <a href="{% url 'trade:inbox' %}" class="btn btn-secondary">← Torna agli Scambi Ricevuti</a>
+        {% else %}
+            <a href="{% url 'trade:sent' %}" class="btn btn-secondary">← Torna agli Scambi Inviati</a>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

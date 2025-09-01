@@ -171,11 +171,24 @@ INSTALLED_APPS = [
     'django_classified',
     'social_django',
 
+    # ⭐ MODULI ESSENZIALI PER BARATTO
+    'crispy_forms',         # django-crispy-forms
+    'crispy_bootstrap4',    # crispy bootstrap4 template pack
+    'widget_tweaks',        # django-widget-tweaks
+    'django_extensions',    # utilities per sviluppo
+
     'demo',
     'registration',  
-
     "trade"
 ]
+
+# ⭐ CONFIGURAZIONI CRISPY FORMS
+CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap4"
+CRISPY_TEMPLATE_PACK = "bootstrap4"
+
+# Email per notifiche (già presente, assicuriamoci sia configurato)
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # development
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'  # production
 
 ACCOUNT_ACTIVATION_DAYS = 7  # per backend 'default' (con email)
 

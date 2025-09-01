@@ -1,0 +1,50 @@
+1c788d0 | 2025-08-31 | riccardo74 | Move registration templates and add base.html bridge
+eff7548 | 2025-08-31 | riccardo74 | Add trade (barter) module with user proposals
+1f7483b | 2025-08-31 | riccardo74 | Add NINVENDO branding and dynamic site config support
+eea7fe8 | 2025-08-31 | riccardo74 | Add list_html.txt and list_py.txt files
+a484832 | 2025-08-31 | riccardo74 | Set local memory cache backend for development
+48bd3b2 | 2025-04-03 | dependabot[bot] | Bump django from 5.1.7 to 5.1.8 (#173)
+11cf76a | 2025-03-11 | dependabot[bot] | Bump django from 5.1.5 to 5.1.7 (#172)
+6f541c1 | 2025-01-26 | dependabot[bot] | Bump django from 5.1.4 to 5.1.5 (#168)
+ed34e86 | 2025-01-06 | Sergey Lyapustin | Update deployment template to use repo_clone_url instead of github
+1d50510 | 2025-01-05 | Sergey Lyapustin | Digital Ocean deployment button (#166)
+3187eb1 | 2025-01-05 | Sergey Lyapustin | Update project configuration and dependencies
+36aba25 | 2023-07-25 | Sergey Lyapustin | Merge pull request #163 from slyapustin/dependabot/pip/django-3.2.18
+7c01deb | 2023-07-25 | Sergey Lyapustin | Merge pull request #164 from slyapustin/dokku
+859b9ec | 2023-07-25 | Sergey Lyapustin | Set DEFAULT_AUTO_FIELD config option.
+56f95cd | 2023-07-25 | Sergey Lyapustin | Updated Python version.
+d8cc25f | 2023-02-15 | dependabot[bot] | Bump django from 3.2.15 to 3.2.18
+3c799bf | 2022-08-11 | Sergey Lyapustin | Merge pull request #159 from slyapustin/dependabot/pip/django-3.2.15
+251e0e3 | 2022-08-11 | dependabot[bot] | Bump django from 3.2.14 to 3.2.15
+b9de3ef | 2022-07-17 | Sergey Lyapustin | Updated Python
+c74a3a1 | 2022-07-17 | Sergey Lyapustin | Merge branch 'master' of github.com:inoks/django-classified-demo
+d3f2eb3 | 2022-07-17 | Sergey Lyapustin | Updated Packages.
+0c49ac9 | 2022-05-07 | Sergey Lyapustin | Merge pull request #158 from slyapustin/dependabot/pip/django-3.1.14
+965588c | 2022-05-07 | dependabot[bot] | Bump django from 3.1.13 to 3.1.14
+5d17ec8 | 2022-05-07 | Sergey Lyapustin | Merge pull request #145 from slyapustin/dependabot/pip/django-3.1.13
+3769a97 | 2021-09-22 | dependabot[bot] | Bump django from 3.0.9 to 3.1.13
+6f5633d | 2020-12-23 | Sergey Lyapustin | Merge pull request #109 from slyapustin/pyup-update-whitenoise-5.1.0-to-5.2.0
+1440971 | 2020-12-23 | Sergey Lyapustin | Merge pull request #112 from slyapustin/pyup-update-psycopg2-binary-2.8.5-to-2.8.6
+3841296 | 2020-12-23 | Sergey Lyapustin | Merge pull request #114 from praveenmylavarapu/master
+1a291c5 | 2020-12-17 | Sergey Lyapustin | Merge pull request #118 from slyapustin/pyup-update-django-storages-1.9.1-to-1.11
+0f34723 | 2020-12-17 | pyup-bot | Update django-storages from 1.9.1 to 1.11
+50e6a40 | 2020-10-01 | Praveen Mylavarapu | Read .env file
+2132003 | 2020-09-07 | pyup-bot | Update psycopg2-binary from 2.8.5 to 2.8.6
+c8d73c9 | 2020-08-04 | pyup-bot | Update whitenoise from 5.1.0 to 5.2.0
+fa4bd1d | 2020-08-04 | Sergey Lyapustin | Merge pull request #107 from slyapustin/pyup-update-django-3.0.7-to-3.0.9
+72d7097 | 2020-08-03 | pyup-bot | Update django from 3.0.7 to 3.0.9
+32a72b2 | 2020-06-04 | Sergey Lyapustin | Merge pull request #104 from slyapustin/pyup-update-django-3.0.6-to-3.0.7
+58b54dd | 2020-06-03 | pyup-bot | Update django from 3.0.6 to 3.0.7
+6ec458d | 2020-05-21 | Sergey Lyapustin | Merge pull request #102 from slyapustin/pyup-update-whitenoise-5.0.1-to-5.1.0
+2614398 | 2020-05-20 | pyup-bot | Update whitenoise from 5.0.1 to 5.1.0
+81ccf2a | 2020-05-04 | Sergey Lyapustin | Merge pull request #98 from slyapustin/pyup-update-django-3.0.5-to-3.0.6
+4f521ec | 2020-05-04 | pyup-bot | Update django from 3.0.5 to 3.0.6
+7976582 | 2020-04-17 | Sergey Lyapustin | Updated Github username
+23fda2a | 2020-04-06 | Sergey Lyapustin | Merge pull request #97 from slyapustin/pyup-update-psycopg2-binary-2.8.4-to-2.8.5
+3b21409 | 2020-04-06 | pyup-bot | Update psycopg2-binary from 2.8.4 to 2.8.5
+d73b732 | 2020-04-01 | Sergey Lyapustin | Merge pull request #96 from slyapustin/pyup-update-django-3.0.4-to-3.0.5
+3ad81f1 | 2020-04-01 | pyup-bot | Update django from 3.0.4 to 3.0.5
+1a02004 | 2020-03-04 | Sergey Lyapustin | Merge pull request #95 from slyapustin/pyup-update-django-3.0.3-to-3.0.4
+2842e25 | 2020-03-04 | pyup-bot | Update django from 3.0.3 to 3.0.4
+2c1e571 | 2020-03-04 | Sergey Lyapustin | Update README.md
+079afd6 | 2020-02-23 | Sergey Lyapustin | Removed email/password auth as it required a bit more work in order to make it secure.
