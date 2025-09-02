@@ -1,0 +1,123 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n widget_tweaks %}
+
+{% block title %}Il Mio Profilo{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 700px;">
+    <h3>👤 Il Mio Profilo</h3>
+    
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h5>📝 Informazioni di Contatto</h5>
+        </div>
+        <div class="card-body">
+            <div class="alert alert-info">
+                <h6>ℹ️ Perché compilare queste informazioni?</h6>
+                <p class="mb-0">Queste informazioni saranno visibili <strong>solo agli utenti con cui hai scambi accettati</strong> per facilitare l'organizzazione dello scambio fisico.</p>
+            </div>
+            
+            <form method="post">
+                {% csrf_token %}
+                
+                <h6>📞 Contatto Telefonico</h6>
+                <div class="form-group">
+                    <label for="{{ form.phone_number.id_for_label }}">Numero di Telefono:</label>
+                    {{ form.phone_number|add_class:"form-control" }}
+                    {% if form.phone_number.errors %}
+                        <div class="text-danger">{{ form.phone_number.errors }}</div>
+                    {% endif %}
+                    <small class="form-text text-muted">Formato suggerito: +39 123 456 7890</small>
+                </div>
+
+                <div class="form-group form-check">
+                    {{ form.show_phone_in_trades|add_class:"form-check-input" }}
+                    <label class="form-check-label" for="{{ form.show_phone_in_trades.id_for_label }}">
+                        Mostra il mio numero di telefono negli scambi accettati
+                    </label>
+                    {% if form.show_phone_in_trades.errors %}
+                        <div class="text-danger">{{ form.show_phone_in_trades.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <hr>
+
+                <h6>📍 Localizzazione</h6>
+                <div class="form-group">
+                    <label for="{{ form.location.id_for_label }}">Città/Zona:</label>
+                    {{ form.location|add_class:"form-control" }}
+                    {% if form.location.errors %}
+                        <div class="text-danger">{{ form.location.errors }}</div>
+                    {% endif %}
+                    <small class="form-text text-muted">Es. Milano, Roma, Napoli, etc. Aiuta gli altri utenti a sapere se siete nella stessa zona</small>
+                </div>
+
+                <hr>
+
+                <div class="text-center">
+                    <button type="submit" class="btn btn-primary btn-lg">💾 Salva Profilo</button>
+                    <a href="{% url 'django_classified:index' %}" class="btn btn-secondary">❌ Annulla</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistiche Scambi -->
+    <div class="card mt-4">
+        <div class="card-header bg-success text-white">
+            <h5>📊 Le Mie Statistiche</h5>
+        </div>
+        <div class="card-body">
+            {% if user.trade_profile %}
+                <div class="row">
+                    <div class="col-md-4 text-center">
+                        <h4 class="text-primary">{{ user.trade_profile.total_trades_completed }}</h4>
+                        <p class="text-muted">Scambi Completati</p>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        <h4 class="text-warning">{{ user.trade_profile.average_rating|floatformat:1 }}/5 ⭐</h4>
+                        <p class="text-muted">Rating Medio</p>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        <h4 class="text-info">{{ user.trade_profile.total_feedbacks_received }}</h4>
+                        <p class="text-muted">Valutazioni Ricevute</p>
+                    </div>
+                </div>
+            {% else %}
+                <p class="text-muted text-center">Completa il tuo primo scambio per vedere le statistiche!</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Informazioni Attuali -->
+    {% if profile.phone_number or profile.location %}
+    <div class="card mt-4">
+        <div class="card-header bg-info text-white">
+            <h5>👁️ Anteprima delle Tue Informazioni</h5>
+        </div>
+        <div class="card-body">
+            <p class="text-muted">Ecco come vedranno le tue informazioni gli altri utenti negli scambi accettati:</p>
+            
+            <div class="card border-primary">
+                <div class="card-header bg-primary text-white">
+                    <h6>👤 {{ user.username }}</h6>
+                </div>
+                <div class="card-body">
+                    {% if profile.phone_number and profile.show_phone_in_trades %}
+                        <p><strong>📞 Telefono:</strong> {{ profile.phone_number }}</p>
+                    {% else %}
+                        <p class="text-muted">📞 Telefono: Non disponibile</p>
+                    {% endif %}
+                    
+                    {% if profile.location %}
+                        <p><strong>📍 Zona:</strong> {{ profile.location }}</p>
+                    {% endif %}
+                    
+                    <p><strong>✉️ Email:</strong> {{ user.email }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

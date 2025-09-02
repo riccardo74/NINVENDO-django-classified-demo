@@ -1,0 +1,56 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Login{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width:400px;margin-top:30px">
+  <h3>Accedi</h3>
+
+  <!-- Form username/password -->
+  <form method="post" action="{% url 'login' %}">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+
+    <div class="form-group">
+      <label for="id_username">{% trans "Username" %}</label>
+      {{ form.username }} {{ form.username.errors }}
+    </div>
+
+    <div class="form-group">
+      <label for="id_password">{% trans "Password" %}</label>
+      {{ form.password }} {{ form.password.errors }}
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block">{% trans "Entra" %}</button>
+  </form>
+
+  <!-- Link reset password -->
+  <div style="margin-top:10px;">
+    <a href="{% url 'password_reset' %}">{% trans "Password dimenticata?" %}</a>
+  </div>
+
+  <!-- Link registrazione -->
+  <div style="margin-top:10px;">
+    <a href="{% url 'registration_register' %}">{% trans "Non hai un account? Registrati" %}</a>
+  </div>
+
+  <hr>
+
+  <!-- Login con Google -->
+  <div style="text-align:center;margin-bottom:8px;">
+    <a class="btn btn-default" href="{% url 'social:begin' 'google-oauth2' %}?next=/">
+      <img src="https://developers.google.com/identity/images/g-logo.png" 
+           alt="Google" style="height:18px;vertical-align:middle;margin-right:6px;">
+      Accedi con Google
+    </a>
+  </div>
+
+  <!-- Login con Facebook -->
+  <div style="text-align:center;">
+    <a class="btn btn-default" href="{% url 'social:begin' 'facebook' %}?next=/">
+      Accedi con Facebook
+    </a>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n widget_tweaks %}
+
+{% block title %}Proponi Scambio{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 800px;">
+    <h3>🔄 Proponi uno Scambio</h3>
+    
+    <!-- Annuncio target -->
+    <div class="card mb-4">
+        <div class="card-header bg-info text-white">
+            <h5>📝 Annuncio Richiesto</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3">
+                    {% if want_item.image %}
+                        <img src="{{ want_item.image.url }}" alt="{{ want_item.title }}" class="img-fluid rounded">
+                    {% else %}
+                        <div class="bg-light p-3 text-center rounded">Nessuna Immagine</div>
+                    {% endif %}
+                </div>
+                <div class="col-md-9">
+                    <h5>{{ want_item.title }}</h5>
+                    <p><strong>Proprietario:</strong> {{ want_item.user.username }}</p>
+                    <p><strong>Prezzo:</strong> {{ want_item.price }}{{ want_item.currency }}</p>
+                    {% if want_item.description %}
+                        <p class="text-muted">{{ want_item.description|truncatewords:20 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if not has_items %}
+        <!-- Nessun annuncio disponibile -->
+        <div class="alert alert-warning">
+            <h4>⚠️ Nessun Annuncio Disponibile</h4>
+            <p>Non hai annunci attivi da offrire per questo scambio.</p>
+            <a href="{% url 'django_classified:item-new' %}" class="btn btn-success">✨ Pubblica un Annuncio</a>
+            <a href="{{ want_item.get_absolute_url }}" class="btn btn-secondary">↩️ Torna all'Annuncio</a>
+        </div>
+    {% else %}
+        <!-- Form proposta -->
+        <form method="post">
+            {% csrf_token %}
+            
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>🎁 I Tuoi Annunci</h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="{{ form.offer_item.id_for_label }}">Seleziona cosa vuoi offrire:</label>
+                        {{ form.offer_item|add_class:"form-control form-control-lg" }}
+                        {% if form.offer_item.errors %}
+                            <div class="text-danger">{{ form.offer_item.errors }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>💬 Messaggio</h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="{{ form.message.id_for_label }}">Messaggio per {{ want_item.user.username }} (opzionale):</label>
+                        {{ form.message|add_class:"form-control" }}
+                        {% if form.message.errors %}
+                            <div class="text-danger">{{ form.message.errors }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottoni -->
+            <div class="text-center">
+                <button type="submit" class="btn btn-success btn-lg">
+                    📤 Invia Proposta di Scambio
+                </button>
+                <a href="{{ want_item.get_absolute_url }}" class="btn btn-secondary btn-lg">
+                    ❌ Annulla
+                </a>
+            </div>
+        </form>
+    {% endif %}
+</div>
+{% endblock %}

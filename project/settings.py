@@ -28,6 +28,10 @@ MANAGERS = ADMINS
 # Expected comma separated string with the ALLOWED_HOSTS list
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '127.0.0.1,.herokuapp.com').split(',')
 
+# (Opzionale ma utile in deploy dietro proxy/Render per OAuth)
+# Comma-separated, es: "https://nintendo-swap.onrender.com"
+CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if os.environ.get('CSRF_TRUSTED_ORIGINS') else []
+
 DATABASES = {
     'default': env.db(),
 }
@@ -118,9 +122,11 @@ MIDDLEWARE = (
     'django.contrib.messages.middleware.MessageMiddleware',
 )
 
+# 🔐 Backends: Google OAuth2 + username/password Django (e manteniamo Facebook se già configurato)
 AUTHENTICATION_BACKENDS = (
-    'social_core.backends.facebook.FacebookOAuth2',
-    'django.contrib.auth.backends.ModelBackend',
+    'social_core.backends.google.GoogleOAuth2',     # Google Login
+    'social_core.backends.facebook.FacebookOAuth2', # (opzionale) Facebook già presente
+    'django.contrib.auth.backends.ModelBackend',    # Username/Password nativo Django
 )
 
 ROOT_URLCONF = 'project.urls'
@@ -165,8 +171,27 @@ INSTALLED_APPS = [
     'django_classified',
     'social_django',
 
+    # ⭐ MODULI ESSENZIALI PER BARATTO
+    'crispy_forms',         # django-crispy-forms
+    'crispy_bootstrap4',    # crispy bootstrap4 template pack
+    'widget_tweaks',        # django-widget-tweaks
+    'django_extensions',    # utilities per sviluppo
+
     'demo',
+    'registration',  
+    "trade"
 ]
+
+# ⭐ CONFIGURAZIONI CRISPY FORMS
+CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap4"
+CRISPY_TEMPLATE_PACK = "bootstrap4"
+
+# Email per notifiche (già presente, assicuriamoci sia configurato)
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # development
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'  # production
+
+ACCOUNT_ACTIVATION_DAYS = 7  # per backend 'default' (con email)
+
 
 LOGIN_REDIRECT_URL = '/'
 LOGIN_URL = '/login/'
@@ -174,6 +199,16 @@ LOGOUT_REDIRECT_URL = '/'
 
 DCF_SITE_NAME = 'NinVendo : a place for NinTendo lovers'
 
+# ---- Social Auth: Google (aggiunto) ----
+# Imposta questi valori nell'ambiente (.env o Render env)
+SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.environ.get('SOCIAL_AUTH_GOOGLE_OAUTH2_KEY')
+SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.environ.get('SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET')
+
+# Se sei dietro proxy/https terminato a monte (es. Render), abilita il redirect HTTPS:
+# In locale lascialo False; in produzione metti env SOCIAL_AUTH_REDIRECT_IS_HTTPS=true
+SOCIAL_AUTH_REDIRECT_IS_HTTPS = env.bool('SOCIAL_AUTH_REDIRECT_IS_HTTPS', default=False)
+
+# ---- Social Auth: Facebook (già presente, opzionale) ----
 # You need to obtain Facebook Keys
 # Check docs for more info here:
 # https://python-social-auth.readthedocs.io/en/latest/backends/facebook.html
@@ -209,6 +244,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
 # Configure email Backend via EMAIL_URL
 vars().update(env.email_url())
 
-DCF_CURRENCY = 'GBP'
+DCF_CURRENCY = 'EUR'
 DCF_DISPLAY_EMPTY_GROUPS = True
 GOOGLE_ANALYTICS_PROPERTY_ID = os.environ.get('GOOGLE_ANALYTICS_PROPERTY_ID')

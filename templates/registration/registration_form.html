@@ -1,0 +1,45 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Registrazione" %}{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width:500px; margin-top:30px;">
+  <h3>{% trans "Crea un nuovo account" %}</h3>
+
+  <form method="post" action="">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+
+    <div class="form-group">
+      <label for="id_username">{% trans "Username" %}</label>
+      {{ form.username }}
+      {{ form.username.errors }}
+    </div>
+
+    <div class="form-group">
+      <label for="id_email">{% trans "Email" %}</label>
+      {{ form.email }}
+      {{ form.email.errors }}
+    </div>
+
+    <div class="form-group">
+      <label for="id_password1">{% trans "Password" %}</label>
+      {{ form.password1 }}
+      {{ form.password1.errors }}
+    </div>
+
+    <div class="form-group">
+      <label for="id_password2">{% trans "Conferma password" %}</label>
+      {{ form.password2 }}
+      {{ form.password2.errors }}
+    </div>
+
+    <button type="submit" class="btn btn-success btn-block">{% trans "Registrati" %}</button>
+  </form>
+
+  <div style="margin-top:15px;">
+    <p>{% trans "Hai già un account?" %} <a href="{% url 'login' %}">{% trans "Accedi" %}</a></p>
+  </div>
+</div>
+{% endblock %}

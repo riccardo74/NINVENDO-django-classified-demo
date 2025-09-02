@@ -1,0 +1,536 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n widget_tweaks %}
+
+{% block title %}Dettagli Scambio #{{ trade.pk }}{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 900px;">
+    <h3>🔄 Scambio #{{ trade.pk }}</h3>
+    
+    <!-- Status -->
+    <div class="row mb-3">
+        <div class="col-md-12">
+            <div class="alert 
+                {% if trade.state == 'sent' %}alert-warning
+                {% elif trade.state == 'accepted' %}alert-success
+                {% elif trade.state == 'completed' %}alert-info
+                {% elif trade.state == 'declined' %}alert-danger
+                {% else %}alert-secondary{% endif %}">
+                <h4>
+                    {% if trade.state == 'sent' %}⏳ In Attesa di Risposta
+                    {% elif trade.state == 'accepted' %}✅ Scambio Accettato
+                    {% elif trade.state == 'completed' %}🎉 Scambio Completato
+                    {% elif trade.state == 'declined' %}❌ Scambio Rifiutato
+                    {% elif trade.state == 'cancelled' %}🚫 Scambio Annullato
+                    {% endif %}
+                </h4>
+                <p class="mb-0">Data: {{ trade.created_at|date:"d/m/Y H:i" }}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dettagli Scambio -->
+    <div class="row mb-4">
+        <!-- Annuncio Offerto -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5>📤 {{ trade.from_user.username }} Offre</h5>
+                </div>
+                <div class="card-body">
+                    {% if trade.offer_item.image_set.first %}
+                        <img src="{{ trade.offer_item.image_set.first.file.url }}" alt="{{ trade.offer_item.title }}" 
+                             class="img-fluid mb-3 rounded" style="max-height: 200px; width: 100%; object-fit: cover;">
+                    {% endif %}
+                    <h6><a href="{{ trade.offer_item.get_absolute_url }}" target="_blank">{{ trade.offer_item.title }}</a></h6>
+                    <p><strong>Prezzo:</strong> {{ trade.offer_item.price|floatformat:0 }}€</p>
+                    {% if trade.offer_item.description %}
+                        <p class="text-muted small">{{ trade.offer_item.description|truncatewords:15 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Annuncio Richiesto -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5>📥 {{ trade.to_user.username }} Riceve</h5>
+                </div>
+                <div class="card-body">
+                    {% if trade.want_item.image_set.first %}
+                        <img src="{{ trade.want_item.image_set.first.file.url }}" alt="{{ trade.want_item.title }}" 
+                             class="img-fluid mb-3 rounded" style="max-height: 200px; width: 100%; object-fit: cover;">
+                    {% endif %}
+                    <h6><a href="{{ trade.want_item.get_absolute_url }}" target="_blank">{{ trade.want_item.title }}</a></h6>
+                    <p><strong>Prezzo:</strong> {{ trade.want_item.price|floatformat:0 }}€</p>
+                    {% if trade.want_item.description %}
+                        <p class="text-muted small">{{ trade.want_item.description|truncatewords:15 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Messaggio Iniziale -->
+    {% if trade.message %}
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>💬 Messaggio di {{ trade.from_user.username }}</h5>
+                </div>
+                <div class="card-body">
+                    <p>{{ trade.message|linebreaks }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Azioni Scambio Pendente -->
+    {% if trade.state == 'sent' %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>⚡ Azioni Disponibili</h5>
+                    </div>
+                    <div class="card-body text-center">
+                        {% if user == trade.to_user %}
+                            <form method="post" action="{% url 'trade:action' trade.pk 'accept' %}" style="display:inline; margin-right: 10px;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success btn-lg"
+                                        onclick="return confirm('✅ Accettare questo scambio?')">
+                                    ✅ Accetta Scambio
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'trade:action' trade.pk 'decline' %}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-danger btn-lg"
+                                        onclick="return confirm('❌ Sei sicuro di rifiutare questo scambio?')">
+                                    ❌ Rifiuta
+                                </button>
+                            </form>
+                        {% elif user == trade.from_user %}
+                            <p class="text-muted">In attesa di risposta da {{ trade.to_user.username }}...</p>
+                            <form method="post" action="{% url 'trade:action' trade.pk 'cancel' %}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-warning"
+                                        onclick="return confirm('🚫 Annullare la proposta?')">
+                                    🚫 Annulla Proposta
+                                </button>
+                            </form>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    <!-- SEZIONE SCAMBIO ACCETTATO - COMUNICAZIONE INTERNA -->
+    {% elif trade.state == 'accepted' %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="alert alert-success">
+                    <h4>✅ Scambio Accettato!</h4>
+                    <p>Organizzate insieme il vostro scambio utilizzando la messaggistica qui sotto oppure i contatti diretti.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Informazioni di Contatto -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card border-primary">
+                    <div class="card-header bg-primary text-white">
+                        <h5>👤 {{ trade.from_user.username }} (Offerente)</h5>
+                    </div>
+                    <div class="card-body">
+                        {% if trade.from_user.trade_profile_extended %}
+                            {% if trade.from_user.trade_profile_extended.phone_number and trade.from_user.trade_profile_extended.show_phone_in_trades %}
+                                <p><strong>📞 Telefono:</strong> 
+                                    <a href="tel:{{ trade.from_user.trade_profile_extended.phone_number }}">
+                                        {{ trade.from_user.trade_profile_extended.phone_number }}
+                                    </a>
+                                </p>
+                            {% else %}
+                                <p class="text-muted">📞 Telefono: 
+                                    {% if not trade.from_user.trade_profile_extended.phone_number %}
+                                        Non impostato
+                                    {% else %}
+                                        Nascosto dall'utente
+                                    {% endif %}
+                                </p>
+                            {% endif %}
+                            
+                            {% if trade.from_user.trade_profile_extended.location %}
+                                <p><strong>📍 Zona:</strong> {{ trade.from_user.trade_profile_extended.location }}</p>
+                            {% else %}
+                                <p class="text-muted">📍 Zona: Non impostata</p>
+                            {% endif %}
+                        {% else %}
+                            <p class="text-muted">❌ Profilo non trovato</p>
+                        {% endif %}
+                        
+                        {% if trade.from_user.email %}
+                            <p><strong>✉️ Email:</strong> {{ trade.from_user.email }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card border-success">
+                    <div class="card-header bg-success text-white">
+                        <h5>👤 {{ trade.to_user.username }} (Ricevente)</h5>
+                    </div>
+                    <div class="card-body">
+                        {% if trade.to_user.trade_profile_extended %}
+                            {% if trade.to_user.trade_profile_extended.phone_number and trade.to_user.trade_profile_extended.show_phone_in_trades %}
+                                <p><strong>📞 Telefono:</strong> 
+                                    <a href="tel:{{ trade.to_user.trade_profile_extended.phone_number }}">
+                                        {{ trade.to_user.trade_profile_extended.phone_number }}
+                                    </a>
+                                </p>
+                            {% else %}
+                                <p class="text-muted">📞 Telefono: 
+                                    {% if not trade.to_user.trade_profile_extended.phone_number %}
+                                        Non impostato
+                                    {% else %}
+                                        Nascosto dall'utente
+                                    {% endif %}
+                                </p>
+                            {% endif %}
+                            
+                            {% if trade.to_user.trade_profile_extended.location %}
+                                <p><strong>📍 Zona:</strong> {{ trade.to_user.trade_profile_extended.location }}</p>
+                            {% else %}
+                                <p class="text-muted">📍 Zona: Non impostata</p>
+                            {% endif %}
+                        {% else %}
+                            <p class="text-muted">❌ Profilo non trovato</p>
+                        {% endif %}
+                        
+                        {% if trade.to_user.email %}
+                            <p><strong>✉️ Email:</strong> {{ trade.to_user.email }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Messaggistica Interna con Supporto Immagini -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h5>💬 Messaggistica Interna</h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Cronologia Messaggi con Immagini -->
+                        {% if trade_messages %}
+                            <div class="messages-history mb-3" style="max-height: 400px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; background-color: #f8f9fa;">
+                                {% for msg in trade_messages %}
+                                    <div class="message mb-3 {% if msg.sender == user %}text-right{% endif %}">
+                                        <div class="message-bubble {% if msg.sender == user %}alert-primary{% else %}alert-light{% endif %} alert py-2 px-3" 
+                                             style="display: inline-block; max-width: 80%; text-align: left;">
+                                            
+                                            <!-- Header del messaggio -->
+                                            <small class="text-muted">
+                                                <strong>{{ msg.sender.username }}</strong> - {{ msg.created_at|date:"d/m/Y H:i" }}
+                                            </small>
+                                            
+                                            <!-- Contenuto testuale -->
+                                            {% if msg.message %}
+                                                <div class="mt-1">{{ msg.message|linebreaks }}</div>
+                                            {% endif %}
+                                            
+                                            <!-- Immagine allegata -->
+                                            {% if msg.image %}
+                                                <div class="mt-2">
+                                                    <div class="image-container" style="position: relative;">
+                                                        <!-- Thumbnail cliccabile -->
+                                                        <img src="{% if msg.get_image_thumbnail_url %}{{ msg.get_image_thumbnail_url }}{% else %}{{ msg.image.url }}{% endif %}" 
+                                                             alt="Immagine allegata" 
+                                                             class="img-fluid rounded shadow-sm message-image"
+                                                             style="max-width: 100%; cursor: pointer; border: 2px solid #dee2e6;"
+                                                             onclick="openImageModal('{{ msg.image.url }}', '{{ msg.sender.username }}', '{{ msg.created_at|date:"d/m/Y H:i" }}')">
+                                                        
+                                                        <!-- Overlay con info -->
+                                                        <div class="image-overlay" style="position: absolute; bottom: 5px; right: 5px; background: rgba(0,0,0,0.7); color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.7em;">
+                                                            📷 Clicca per ingrandire
+                                                        </div>
+                                                        
+                                                        <!-- Dimensione file -->
+                                                        {% if msg.get_file_size_display %}
+                                                            <div class="file-size text-muted" style="font-size: 0.8em; margin-top: 5px;">
+                                                                📁 {{ msg.get_file_size_display }}
+                                                            </div>
+                                                        {% endif %}
+                                                    </div>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <p class="text-muted text-center">Nessun messaggio ancora. Inizia la conversazione qui sotto!</p>
+                        {% endif %}
+
+                        <!-- Form Nuovo Messaggio con Supporto Immagini -->
+                        {% if message_form %}
+                            <form method="post" action="{% url 'trade:send_message' trade.pk %}" enctype="multipart/form-data">
+                                {% csrf_token %}
+                                
+                                <div class="form-group">
+                                    <label for="id_message">💬 Scrivi un messaggio:</label>
+                                    {{ message_form.message|add_class:"form-control" }}
+                                    {% if message_form.message.errors %}
+                                        <div class="text-danger">{{ message_form.message.errors }}</div>
+                                    {% endif %}
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="id_image">📷 Allega Immagine (opzionale):</label>
+                                    {{ message_form.image|add_class:"form-control-file" }}
+                                    {% if message_form.image.errors %}
+                                        <div class="text-danger">{{ message_form.image.errors }}</div>
+                                    {% endif %}
+                                    <small class="form-text text-muted">Formati supportati: JPG, PNG, GIF (max 5MB)</small>
+                                </div>
+                                
+                                <!-- Anteprima immagine selezionata -->
+                                <div id="image-preview" style="display: none;" class="mb-3">
+                                    <label>Anteprima:</label>
+                                    <div>
+                                        <img id="preview-img" src="#" alt="Anteprima" class="img-thumbnail" style="max-width: 200px; max-height: 150px;">
+                                    </div>
+                                </div>
+                                
+                                <!-- Errori generali del form -->
+                                {% if message_form.non_field_errors %}
+                                    <div class="alert alert-danger">{{ message_form.non_field_errors }}</div>
+                                {% endif %}
+                                
+                                <button type="submit" class="btn btn-info btn-block">📨 Invia Messaggio</button>
+                            </form>
+                        {% else %}
+                            <div class="alert alert-warning">
+                                Form messaggi non disponibile
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Azione Completa Scambio -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card border-warning">
+                    <div class="card-body text-center">
+                        <h5>Scambio Avvenuto?</h5>
+                        <p class="text-muted">Una volta completato lo scambio fisico, confermate qui sotto:</p>
+                        <form method="post" action="{% url 'trade:action' trade.pk 'complete' %}" style="display:inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-primary btn-lg"
+                                    onclick="return confirm('🎉 Confermare che lo scambio è avvenuto?')">
+                                🎉 Scambio Completato
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    <!-- Scambio Completato - Feedback -->
+    {% elif trade.state == 'completed' %}
+        <!-- Messaggistica anche per scambi completati con immagini -->
+        {% if trade_messages %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header bg-secondary text-white">
+                        <h5>💬 Cronologia Messaggi</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="messages-history" style="max-height: 300px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; background-color: #f8f9fa;">
+                            {% for msg in trade_messages %}
+                                <div class="message mb-3 {% if msg.sender == user %}text-right{% endif %}">
+                                    <div class="message-bubble {% if msg.sender == user %}alert-primary{% else %}alert-light{% endif %} alert py-2 px-3" 
+                                         style="display: inline-block; max-width: 80%; text-align: left;">
+                                        
+                                        <small class="text-muted">
+                                            <strong>{{ msg.sender.username }}</strong> - {{ msg.created_at|date:"d/m/Y H:i" }}
+                                        </small>
+                                        
+                                        {% if msg.message %}
+                                            <div class="mt-1">{{ msg.message|linebreaks }}</div>
+                                        {% endif %}
+                                        
+                                        {% if msg.image %}
+                                            <div class="mt-2">
+                                                <img src="{% if msg.get_image_thumbnail_url %}{{ msg.get_image_thumbnail_url }}{% else %}{{ msg.image.url }}{% endif %}" 
+                                                     alt="Immagine allegata" 
+                                                     class="img-fluid rounded message-image"
+                                                     style="max-width: 100%; cursor: pointer;"
+                                                     onclick="openImageModal('{{ msg.image.url }}', '{{ msg.sender.username }}', '{{ msg.created_at|date:"d/m/Y H:i" }}')">
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Sezione Feedback -->
+        {% if feedback_form %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card border-warning">
+                    <div class="card-header bg-warning">
+                        <h5>⭐ Lascia un Feedback</h5>
+                    </div>
+                    <div class="card-body">
+                        <form method="post" action="{% url 'trade:feedback' trade.pk %}">
+                            {% csrf_token %}
+                            <div class="form-group">
+                                {{ feedback_form.rating.label_tag }}
+                                {{ feedback_form.rating }}
+                            </div>
+                            <div class="form-group">
+                                {{ feedback_form.comment.label_tag }}
+                                {{ feedback_form.comment }}
+                            </div>
+                            <button type="submit" class="btn btn-warning btn-block">⭐ Invia Valutazione</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% elif my_feedback %}
+        <div class="alert alert-info">
+            <h5>⭐ Il Tuo Feedback</h5>
+            <p><strong>Voto:</strong> {{ my_feedback.rating }}/5 ⭐</p>
+            {% if my_feedback.comment %}
+                <p><strong>Commento:</strong> {{ my_feedback.comment }}</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    {% endif %}
+
+    <!-- Navigation -->
+    <div class="text-center">
+        {% if user == trade.to_user %}
+            <a href="{% url 'trade:inbox' %}" class="btn btn-secondary">← Torna agli Scambi Ricevuti</a>
+        {% else %}
+            <a href="{% url 'trade:sent' %}" class="btn btn-secondary">← Torna agli Scambi Inviati</a>
+        {% endif %}
+        
+        <a href="{% url 'trade:profile' %}" class="btn btn-outline-info">
+            📝 Gestisci il Profilo
+        </a>
+    </div>
+</div>
+
+<!-- Modal per Visualizzare Immagini a Schermo Intero -->
+<div class="modal fade" id="imageModal" tabindex="-1" role="dialog" aria-labelledby="imageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="imageModalLabel">Immagine di <span id="modal-sender"></span></h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="modal-image" src="#" alt="Immagine" class="img-fluid">
+                <div class="mt-2">
+                    <small class="text-muted" id="modal-datetime"></small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Chiudi</button>
+                <a id="modal-download" href="#" class="btn btn-primary" download>📥 Scarica</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Stili per le immagini nei messaggi */
+.message-image {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.message-image:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.image-container:hover .image-overlay {
+    opacity: 1;
+}
+
+.image-overlay {
+    opacity: 0.8;
+    transition: opacity 0.2s ease;
+}
+
+/* Stili per l'anteprima dell'upload */
+#image-preview {
+    border: 2px dashed #007bff;
+    border-radius: 8px;
+    padding: 15px;
+    background-color: #f8f9fa;
+}
+</style>
+
+<script>
+// Script per gestire l'anteprima delle immagini e il modal
+document.addEventListener('DOMContentLoaded', function() {
+    const fileInput = document.getElementById('id_image');
+    const preview = document.getElementById('image-preview');
+    const previewImg = document.getElementById('preview-img');
+    const messagesHistory = document.querySelector('.messages-history');
+
+    // Auto-scroll della chat
+    if (messagesHistory) {
+        messagesHistory.scrollTop = messagesHistory.scrollHeight;
+    }
+
+    // Anteprima immagine selezionata
+    if (fileInput) {
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewImg.src = e.target.result;
+                    preview.style.display = 'block';
+                };
+                reader.readAsDataURL(file);
+            } else {
+                preview.style.display = 'none';
+            }
+        });
+    }
+});
+
+// Funzione per aprire il modal dell'immagine
+function openImageModal(imageUrl, senderName, datetime) {
+    document.getElementById('modal-image').src = imageUrl;
+    document.getElementById('modal-sender').textContent = senderName;
+    document.getElementById('modal-datetime').textContent = datetime;
+    document.getElementById('modal-download').href = imageUrl;
+    
+    $('#imageModal').modal('show');
+}
+</script>
+
+{% endblock %}

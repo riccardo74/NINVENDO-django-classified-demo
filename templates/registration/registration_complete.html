@@ -1,0 +1,12 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Registrazione completata" %}{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width:500px; margin-top:30px;">
+  <h3>{% trans "Registrazione completata!" %}</h3>
+  <p>{% trans "Ora puoi accedere al tuo account con le credenziali scelte." %}</p>
+  <a href="{% url 'login' %}" class="btn btn-primary">{% trans "Vai al login" %}</a>
+</div>
+{% endblock %}
