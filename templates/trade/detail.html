@@ -219,7 +219,7 @@
             </div>
         </div>
 
-        <!-- Messaggistica Interna -->
+        <!-- Messaggistica Interna con Supporto Immagini -->
         <div class="row mb-4">
             <div class="col-md-12">
                 <div class="card">
@@ -227,17 +227,49 @@
                         <h5>💬 Messaggistica Interna</h5>
                     </div>
                     <div class="card-body">
-                        <!-- Cronologia Messaggi -->
+                        <!-- Cronologia Messaggi con Immagini -->
                         {% if trade_messages %}
-                            <div class="messages-history mb-3" style="max-height: 300px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; background-color: #f8f9fa;">
+                            <div class="messages-history mb-3" style="max-height: 400px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; background-color: #f8f9fa;">
                                 {% for msg in trade_messages %}
-                                    <div class="message mb-2 {% if msg.sender == user %}text-right{% endif %}">
+                                    <div class="message mb-3 {% if msg.sender == user %}text-right{% endif %}">
                                         <div class="message-bubble {% if msg.sender == user %}alert-primary{% else %}alert-light{% endif %} alert py-2 px-3" 
-                                             style="display: inline-block; max-width: 70%; text-align: left;">
+                                             style="display: inline-block; max-width: 80%; text-align: left;">
+                                            
+                                            <!-- Header del messaggio -->
                                             <small class="text-muted">
                                                 <strong>{{ msg.sender.username }}</strong> - {{ msg.created_at|date:"d/m/Y H:i" }}
                                             </small>
-                                            <div>{{ msg.message|linebreaks }}</div>
+                                            
+                                            <!-- Contenuto testuale -->
+                                            {% if msg.message %}
+                                                <div class="mt-1">{{ msg.message|linebreaks }}</div>
+                                            {% endif %}
+                                            
+                                            <!-- Immagine allegata -->
+                                            {% if msg.image %}
+                                                <div class="mt-2">
+                                                    <div class="image-container" style="position: relative;">
+                                                        <!-- Thumbnail cliccabile -->
+                                                        <img src="{% if msg.get_image_thumbnail_url %}{{ msg.get_image_thumbnail_url }}{% else %}{{ msg.image.url }}{% endif %}" 
+                                                             alt="Immagine allegata" 
+                                                             class="img-fluid rounded shadow-sm message-image"
+                                                             style="max-width: 100%; cursor: pointer; border: 2px solid #dee2e6;"
+                                                             onclick="openImageModal('{{ msg.image.url }}', '{{ msg.sender.username }}', '{{ msg.created_at|date:"d/m/Y H:i" }}')">
+                                                        
+                                                        <!-- Overlay con info -->
+                                                        <div class="image-overlay" style="position: absolute; bottom: 5px; right: 5px; background: rgba(0,0,0,0.7); color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.7em;">
+                                                            📷 Clicca per ingrandire
+                                                        </div>
+                                                        
+                                                        <!-- Dimensione file -->
+                                                        {% if msg.get_file_size_display %}
+                                                            <div class="file-size text-muted" style="font-size: 0.8em; margin-top: 5px;">
+                                                                📁 {{ msg.get_file_size_display }}
+                                                            </div>
+                                                        {% endif %}
+                                                    </div>
+                                                </div>
+                                            {% endif %}
                                         </div>
                                     </div>
                                 {% endfor %}
@@ -246,14 +278,41 @@
                             <p class="text-muted text-center">Nessun messaggio ancora. Inizia la conversazione qui sotto!</p>
                         {% endif %}
 
-                        <!-- Form Nuovo Messaggio -->
+                        <!-- Form Nuovo Messaggio con Supporto Immagini -->
                         {% if message_form %}
-                            <form method="post" action="{% url 'trade:send_message' trade.pk %}">
+                            <form method="post" action="{% url 'trade:send_message' trade.pk %}" enctype="multipart/form-data">
                                 {% csrf_token %}
+                                
                                 <div class="form-group">
-                                    <label for="id_message">Scrivi un messaggio:</label>
+                                    <label for="id_message">💬 Scrivi un messaggio:</label>
                                     {{ message_form.message|add_class:"form-control" }}
+                                    {% if message_form.message.errors %}
+                                        <div class="text-danger">{{ message_form.message.errors }}</div>
+                                    {% endif %}
                                 </div>
+                                
+                                <div class="form-group">
+                                    <label for="id_image">📷 Allega Immagine (opzionale):</label>
+                                    {{ message_form.image|add_class:"form-control-file" }}
+                                    {% if message_form.image.errors %}
+                                        <div class="text-danger">{{ message_form.image.errors }}</div>
+                                    {% endif %}
+                                    <small class="form-text text-muted">Formati supportati: JPG, PNG, GIF (max 5MB)</small>
+                                </div>
+                                
+                                <!-- Anteprima immagine selezionata -->
+                                <div id="image-preview" style="display: none;" class="mb-3">
+                                    <label>Anteprima:</label>
+                                    <div>
+                                        <img id="preview-img" src="#" alt="Anteprima" class="img-thumbnail" style="max-width: 200px; max-height: 150px;">
+                                    </div>
+                                </div>
+                                
+                                <!-- Errori generali del form -->
+                                {% if message_form.non_field_errors %}
+                                    <div class="alert alert-danger">{{ message_form.non_field_errors }}</div>
+                                {% endif %}
+                                
                                 <button type="submit" class="btn btn-info btn-block">📨 Invia Messaggio</button>
                             </form>
                         {% else %}
@@ -287,7 +346,7 @@
 
     <!-- Scambio Completato - Feedback -->
     {% elif trade.state == 'completed' %}
-        <!-- Messaggistica anche per scambi completati -->
+        <!-- Messaggistica anche per scambi completati con immagini -->
         {% if trade_messages %}
         <div class="row mb-4">
             <div class="col-md-12">
@@ -296,15 +355,29 @@
                         <h5>💬 Cronologia Messaggi</h5>
                     </div>
                     <div class="card-body">
-                        <div class="messages-history" style="max-height: 200px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; background-color: #f8f9fa;">
+                        <div class="messages-history" style="max-height: 300px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; background-color: #f8f9fa;">
                             {% for msg in trade_messages %}
-                                <div class="message mb-2 {% if msg.sender == user %}text-right{% endif %}">
+                                <div class="message mb-3 {% if msg.sender == user %}text-right{% endif %}">
                                     <div class="message-bubble {% if msg.sender == user %}alert-primary{% else %}alert-light{% endif %} alert py-2 px-3" 
-                                         style="display: inline-block; max-width: 70%; text-align: left;">
+                                         style="display: inline-block; max-width: 80%; text-align: left;">
+                                        
                                         <small class="text-muted">
                                             <strong>{{ msg.sender.username }}</strong> - {{ msg.created_at|date:"d/m/Y H:i" }}
                                         </small>
-                                        <div>{{ msg.message|linebreaks }}</div>
+                                        
+                                        {% if msg.message %}
+                                            <div class="mt-1">{{ msg.message|linebreaks }}</div>
+                                        {% endif %}
+                                        
+                                        {% if msg.image %}
+                                            <div class="mt-2">
+                                                <img src="{% if msg.get_image_thumbnail_url %}{{ msg.get_image_thumbnail_url }}{% else %}{{ msg.image.url }}{% endif %}" 
+                                                     alt="Immagine allegata" 
+                                                     class="img-fluid rounded message-image"
+                                                     style="max-width: 100%; cursor: pointer;"
+                                                     onclick="openImageModal('{{ msg.image.url }}', '{{ msg.sender.username }}', '{{ msg.created_at|date:"d/m/Y H:i" }}')">
+                                            </div>
+                                        {% endif %}
                                     </div>
                                 </div>
                             {% endfor %}
@@ -365,14 +438,99 @@
     </div>
 </div>
 
-<!-- Script per auto-scroll della chat -->
+<!-- Modal per Visualizzare Immagini a Schermo Intero -->
+<div class="modal fade" id="imageModal" tabindex="-1" role="dialog" aria-labelledby="imageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="imageModalLabel">Immagine di <span id="modal-sender"></span></h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="modal-image" src="#" alt="Immagine" class="img-fluid">
+                <div class="mt-2">
+                    <small class="text-muted" id="modal-datetime"></small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Chiudi</button>
+                <a id="modal-download" href="#" class="btn btn-primary" download>📥 Scarica</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Stili per le immagini nei messaggi */
+.message-image {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.message-image:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.image-container:hover .image-overlay {
+    opacity: 1;
+}
+
+.image-overlay {
+    opacity: 0.8;
+    transition: opacity 0.2s ease;
+}
+
+/* Stili per l'anteprima dell'upload */
+#image-preview {
+    border: 2px dashed #007bff;
+    border-radius: 8px;
+    padding: 15px;
+    background-color: #f8f9fa;
+}
+</style>
+
 <script>
+// Script per gestire l'anteprima delle immagini e il modal
 document.addEventListener('DOMContentLoaded', function() {
+    const fileInput = document.getElementById('id_image');
+    const preview = document.getElementById('image-preview');
+    const previewImg = document.getElementById('preview-img');
     const messagesHistory = document.querySelector('.messages-history');
+
+    // Auto-scroll della chat
     if (messagesHistory) {
         messagesHistory.scrollTop = messagesHistory.scrollHeight;
     }
+
+    // Anteprima immagine selezionata
+    if (fileInput) {
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewImg.src = e.target.result;
+                    preview.style.display = 'block';
+                };
+                reader.readAsDataURL(file);
+            } else {
+                preview.style.display = 'none';
+            }
+        });
+    }
 });
+
+// Funzione per aprire il modal dell'immagine
+function openImageModal(imageUrl, senderName, datetime) {
+    document.getElementById('modal-image').src = imageUrl;
+    document.getElementById('modal-sender').textContent = senderName;
+    document.getElementById('modal-datetime').textContent = datetime;
+    document.getElementById('modal-download').href = imageUrl;
+    
+    $('#imageModal').modal('show');
+}
 </script>
 
 {% endblock %}

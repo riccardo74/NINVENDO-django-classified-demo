@@ -293,9 +293,12 @@ class TradeActionView(LoginRequiredMixin, View):
             return redirect("trade:sent")
 
 
+
+# Sostituisci la classe SendTradeMessageView esistente in trade/views.py
+
 @method_decorator(login_required, name="dispatch")
 class SendTradeMessageView(View):
-    """Invia un messaggio nel thread dello scambio (accepted/completed)."""
+    """Invia un messaggio nel thread dello scambio con supporto immagini"""
 
     def post(self, request, pk):
         trade = get_object_or_404(TradeProposal, pk=pk)
@@ -310,16 +313,27 @@ class SendTradeMessageView(View):
             messages.error(request, "Non puoi inviare messaggi per questo scambio.")
             return redirect("trade:detail", pk=pk)
 
-        form = TradeMessageForm(trade, user, request.POST)
+        # Include files nel form
+        form = TradeMessageForm(trade, user, request.POST, request.FILES)
+        
         if form.is_valid():
-            form.save()  # il form imposta trade/sender/recipient
-            messages.success(request, "Messaggio inviato!")
+            message = form.save()
+            
+            # Messaggio di conferma diverso in base al contenuto
+            if message.image and message.message:
+                messages.success(request, "Messaggio con immagine inviato!")
+            elif message.image:
+                messages.success(request, "Immagine inviata!")
+            else:
+                messages.success(request, "Messaggio inviato!")
+                
         else:
-            messages.error(request, "Errore nell'invio del messaggio.")
+            # Mostra errori specifici del form
+            for field, errors in form.errors.items():
+                for error in errors:
+                    messages.error(request, f"Errore nel campo {field}: {error}")
 
         return redirect("trade:detail", pk=pk)
-
-
 @method_decorator(login_required, name="dispatch")
 class SubmitFeedbackView(View):
     """Submit feedback per uno scambio completato"""

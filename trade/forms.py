@@ -7,20 +7,19 @@ from crispy_forms.bootstrap import InlineRadios
 
 from django_classified.models import Item
 from .models import TradeProposal, TradeFeedback, UserTradeProfile, TradeMessage
-from .user_profile import UserProfile
 
 User = get_user_model()
 
 
 # ------------------------------------------------------------
-# Profilo Utente Esteso
+# Profilo Utente Esteso (usando UserTradeProfile invece di UserProfile)
 # ------------------------------------------------------------
 class UserProfileForm(forms.ModelForm):
     """Form per modificare le informazioni del profilo utente esteso"""
     
     class Meta:
-        model = UserProfile
-        fields = ['phone_number', 'show_phone_in_trades', 'location']
+        model = UserTradeProfile
+        fields = ['phone_number', 'show_phone_in_trades', 'location', 'bio']
         widgets = {
             'phone_number': forms.TextInput(attrs={
                 'placeholder': '+39 123 456 7890',
@@ -28,6 +27,11 @@ class UserProfileForm(forms.ModelForm):
             }),
             'location': forms.TextInput(attrs={
                 'placeholder': 'es. Milano, Roma, Napoli...',
+                'class': 'form-control'
+            }),
+            'bio': forms.Textarea(attrs={
+                'rows': 3,
+                'placeholder': 'Racconta qualcosa di te...',
                 'class': 'form-control'
             }),
         }
@@ -39,6 +43,7 @@ class UserProfileForm(forms.ModelForm):
         self.fields['phone_number'].label = 'Numero di Telefono'
         self.fields['show_phone_in_trades'].label = 'Mostra negli scambi accettati'
         self.fields['location'].label = 'Città/Zona'
+        self.fields['bio'].label = 'Biografia'
         
         # Crispy layout se disponibile
         try:
@@ -52,6 +57,9 @@ class UserProfileForm(forms.ModelForm):
                 HTML('<hr>'),
                 HTML('<h4>📍 Localizzazione</h4>'),
                 Field('location'),
+                HTML('<hr>'),
+                HTML('<h4>👤 Biografia</h4>'),
+                Field('bio'),
                 HTML('<hr>'),
                 Div(
                     Submit('save', '💾 Salva Profilo', css_class='btn btn-primary btn-block'),
@@ -68,17 +76,21 @@ class UserProfileForm(forms.ModelForm):
 # ------------------------------------------------------------
 class TradeMessageForm(forms.ModelForm):
     """
-    Form per inviare un messaggio interno in un Trade.
+    Form per inviare un messaggio interno in un Trade con supporto immagini.
     Firma: TradeMessageForm(trade, sender, data=None, files=None, **kwargs)
     """
     class Meta:
         model = TradeMessage
-        fields = ["message"]
+        fields = ["message", "image"]
         widgets = {
             "message": forms.Textarea(attrs={
                 "rows": 3,
                 "placeholder": "Scrivi un messaggio per organizzare lo scambio...",
                 "class": "form-control"
+            }),
+            "image": forms.ClearableFileInput(attrs={
+                "class": "form-control-file",
+                "accept": "image/*"
             })
         }
 
@@ -87,19 +99,64 @@ class TradeMessageForm(forms.ModelForm):
         self.trade = trade
         self.sender = sender
         
-        # Label personalizzata
+        # Labels personalizzate
         self.fields['message'].label = 'Messaggio'
+        self.fields['message'].required = False  # Non obbligatorio se c'è un'immagine
+        self.fields['image'].label = 'Allega Immagine'
+        
+        # Help text
+        self.fields['image'].help_text = 'Formati supportati: JPG, PNG, GIF (max 5MB)'
 
-        # Crispy layout (opzionale)
+        # Crispy layout con supporto immagini
         try:
             self.helper = FormHelper()
             self.helper.form_method = "post"
+            self.helper.form_enctype = "multipart/form-data"  # Importante per i file
             self.helper.layout = Layout(
-                Field("message"),
+                Field("message", placeholder="Scrivi un messaggio..."),
+                HTML('<div class="form-group">'),
+                HTML('<label for="id_image">📷 Allega Immagine (opzionale)</label>'),
+                Field("image"),
+                HTML('<small class="form-text text-muted">Formati: JPG, PNG, GIF - Max 5MB</small>'),
+                HTML('</div>'),
+                HTML('<hr>'),
                 Submit("send", "📨 Invia Messaggio", css_class="btn btn-info btn-block")
             )
         except ImportError:
             pass
+    
+    def clean(self):
+        """Validazione personalizzata: deve esserci messaggio O immagine"""
+        cleaned_data = super().clean()
+        message = cleaned_data.get('message', '').strip()
+        image = cleaned_data.get('image')
+        
+        if not message and not image:
+            raise ValidationError(
+                "È necessario scrivere un messaggio o allegare un'immagine."
+            )
+        
+        return cleaned_data
+    
+    def clean_image(self):
+        """Validazione dell'immagine"""
+        image = self.cleaned_data.get('image')
+        
+        if image:
+            # Controllo dimensione file (5MB max)
+            if image.size > 5 * 1024 * 1024:
+                raise ValidationError("L'immagine è troppo grande. Dimensione massima: 5MB")
+            
+            # Controllo tipo file
+            if not image.content_type.startswith('image/'):
+                raise ValidationError("Il file deve essere un'immagine (JPG, PNG, GIF)")
+            
+            # Lista formati supportati
+            allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+            if image.content_type not in allowed_types:
+                raise ValidationError("Formato non supportato. Usa JPG, PNG, GIF o WebP")
+        
+        return image
 
     def save(self, commit=True):
         obj = super().save(commit=False)
@@ -107,11 +164,12 @@ class TradeMessageForm(forms.ModelForm):
         obj.sender = self.sender
         # Destinatario = l'altro partecipante allo scambio
         obj.recipient = self.trade.to_user if self.sender == self.trade.from_user else self.trade.from_user
+        
         if commit:
             obj.save()
         return obj
-
-
+    
+    
 # ------------------------------------------------------------
 # Creazione proposta di scambio
 # ------------------------------------------------------------
@@ -423,6 +481,49 @@ class TradeSearchForm(forms.Form):
                     Column("keywords", css_class="col-md-4"),
                 ),
                 Submit("search", "🔍 Cerca Scambi", css_class="btn btn-outline-primary btn-block")
+            )
+        except ImportError:
+            pass
+
+
+# ------------------------------------------------------------
+# Form di utilità per moderazione/admin
+# ------------------------------------------------------------
+class TradeReportForm(forms.Form):
+    """Form per segnalare problemi con uno scambio"""
+    
+    REASON_CHOICES = [
+        ('spam', 'Spam o contenuto inappropriato'),
+        ('fake', 'Annuncio falso o ingannevole'),
+        ('offline', 'Utente non risponde'),
+        ('rude', 'Comportamento scorretto'),
+        ('other', 'Altro'),
+    ]
+    
+    reason = forms.ChoiceField(
+        choices=REASON_CHOICES,
+        widget=forms.RadioSelect,
+        label="Motivo della segnalazione"
+    )
+    
+    description = forms.CharField(
+        widget=forms.Textarea(attrs={"rows": 4}),
+        required=False,
+        label="Descrizione dettagliata"
+    )
+    
+    def __init__(self, trade, reporter, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.trade = trade
+        self.reporter = reporter
+        
+        try:
+            self.helper = FormHelper()
+            self.helper.layout = Layout(
+                HTML(f'<h5>Segnala Scambio #{trade.pk}</h5>'),
+                InlineRadios('reason'),
+                Field('description'),
+                Submit('submit', '🚨 Invia Segnalazione', css_class='btn btn-danger')
             )
         except ImportError:
             pass

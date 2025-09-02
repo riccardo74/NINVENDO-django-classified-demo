@@ -14,15 +14,6 @@ logger = logging.getLogger(__name__)
 from django_classified.models import Item
 
 
-# Aggiungi questo import all'inizio del file trade/models.py
-from .user_profile import UserProfile
-
-# Aggiungi questo metodo alla classe UserTradeProfile esistente
-def get_user_profile(self):
-    """Ottieni il profilo esteso dell'utente"""
-    profile, created = UserProfile.objects.get_or_create(user=self.user)
-    return profile
-
 class TradeProposal(models.Model):
     STATE_SENT = "sent"
     STATE_ACCEPTED = "accepted"
@@ -61,7 +52,7 @@ class TradeProposal(models.Model):
     is_counter_offer = models.BooleanField(default=False)
     parent_proposal = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE)
 
-    # ⭐ USIAMO CharField INVECE DI FSMField
+    # USIAMO CharField INVECE DI FSMField
     state = models.CharField(max_length=20, choices=STATE_CHOICES, default=STATE_SENT)
 
     class Meta:
@@ -158,7 +149,7 @@ class TradeProposal(models.Model):
         """Entrambi possono completare se accettata"""
         return user in [self.from_user, self.to_user] and self.state == self.STATE_ACCEPTED
 
-    # ⭐ METODI MANUALI (NON PIÙ FSM) CON LOGICA COMPLETA
+    # METODI MANUALI (NON PIÙ FSM) CON LOGICA COMPLETA
     def accept(self):
         """Accetta la proposta e disattiva gli annunci"""
         print(f"🔥🔥🔥 ACCEPT MANUALE CHIAMATO! Trade {self.id} 🔥🔥🔥")
@@ -180,11 +171,11 @@ class TradeProposal(models.Model):
             print(f"   - offer_item({self.offer_item.id}).is_active = {self.offer_item.is_active}")
             print(f"   - want_item({self.want_item.id}).is_active = {self.want_item.is_active}")
             
-            # ⭐ CAMBIA STATO PRIMA DI TUTTO
+            # CAMBIA STATO PRIMA DI TUTTO
             self.state = self.STATE_ACCEPTED
             print(f"🔥 Stato cambiato in: {self.state}")
             
-            # ⭐ DISATTIVA GLI ANNUNCI COINVOLTI (RISERVATI)
+            # DISATTIVA GLI ANNUNCI COINVOLTI (RISERVATI)
             self.offer_item.is_active = False
             self.offer_item.save(update_fields=['is_active'])
             print(f"🔥 offer_item disattivato")
@@ -201,7 +192,7 @@ class TradeProposal(models.Model):
             print(f"   - offer_item({self.offer_item.id}).is_active = {self.offer_item.is_active}")
             print(f"   - want_item({self.want_item.id}).is_active = {self.want_item.is_active}")
             
-            # ⭐ ANNULLA PROPOSTE CONCORRENTI
+            # ANNULLA PROPOSTE CONCORRENTI
             self.cancel_competing_proposals()
             
             logger.info(f"Trade {self.id}: Annunci {self.offer_item.id} e {self.want_item.id} disattivati (riservati)")
@@ -237,7 +228,7 @@ class TradeProposal(models.Model):
             old_state = self.state
             self.state = self.STATE_CANCELLED
             
-            # ⭐ RIATTIVA GLI ANNUNCI SE ERANO STATI DISATTIVATI
+            # RIATTIVA GLI ANNUNCI SE ERANO STATI DISATTIVATI
             if old_state == self.STATE_ACCEPTED:
                 print(f"🔥 Stato era ACCEPTED, riattivando annunci")
                 
@@ -295,12 +286,25 @@ class TradeProposal(models.Model):
 
 
 class TradeMessage(models.Model):
-    """Sistema di messaggistica interna per gli scambi"""
+    """Sistema di messaggistica interna per gli scambi CON supporto immagini"""
     trade = models.ForeignKey(TradeProposal, on_delete=models.CASCADE, related_name="messages")
     sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sent_trade_messages")
     recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="received_trade_messages")
     
-    message = models.TextField(max_length=1000, help_text="Messaggio per organizzare lo scambio")
+    message = models.TextField(
+        max_length=1000, 
+        blank=True,  # Ora può essere vuoto se c'è un'immagine
+        help_text="Messaggio per organizzare lo scambio"
+    )
+    
+    # Campo per l'immagine allegata
+    image = models.ImageField(
+        upload_to='trade_messages/%Y/%m/%d/',
+        blank=True,
+        null=True,
+        help_text="Immagine allegata al messaggio"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     is_read = models.BooleanField(default=False)
     
@@ -308,17 +312,56 @@ class TradeMessage(models.Model):
         ordering = ['created_at']
         indexes = [
             models.Index(fields=["trade", "created_at"]),
+            models.Index(fields=["sender", "created_at"]),
             models.Index(fields=["recipient", "is_read"]),
         ]
-    
+
     def __str__(self):
-        return f"Messaggio da {self.sender} a {self.recipient} per Trade #{self.trade.id}"
+        if self.message:
+            preview = self.message[:50] + "..." if len(self.message) > 50 else self.message
+            return f"{self.sender.username}: {preview}"
+        elif self.image:
+            return f"{self.sender.username}: [Immagine allegata]"
+        else:
+            return f"{self.sender.username}: [Messaggio vuoto]"
+    
+    def clean(self):
+        """Validazione: deve esserci almeno un messaggio o un'immagine"""
+        if not self.message and not self.image:
+            raise ValidationError("È necessario inserire un messaggio o allegare un'immagine.")
     
     def save(self, *args, **kwargs):
         # Auto-imposta il recipient come l'altro utente nello scambio
         if not self.recipient:
             self.recipient = self.trade.to_user if self.sender == self.trade.from_user else self.trade.from_user
         super().save(*args, **kwargs)
+    
+    def get_image_thumbnail_url(self):
+        """Genera URL per thumbnail dell'immagine (se supportato)"""
+        if self.image:
+            try:
+                from sorl.thumbnail import get_thumbnail
+                thumbnail = get_thumbnail(self.image, '300x200', crop='center', quality=85)
+                return thumbnail.url
+            except ImportError:
+                # Se sorl.thumbnail non è disponibile, usa l'immagine originale
+                return self.image.url
+            except Exception:
+                # Fallback per altri errori
+                return self.image.url
+        return None
+    
+    def get_file_size_display(self):
+        """Mostra dimensione file in formato leggibile"""
+        if self.image and hasattr(self.image, 'size'):
+            size = self.image.size
+            if size < 1024:
+                return f"{size} B"
+            elif size < 1024 * 1024:
+                return f"{size // 1024} KB"
+            else:
+                return f"{size // (1024 * 1024)} MB"
+        return None
 
 
 class TradeFeedback(models.Model):
@@ -368,6 +411,27 @@ class UserTradeProfile(models.Model):
     avg_rating = models.DecimalField(max_digits=3, decimal_places=2, default=0.0)
     total_ratings = models.PositiveIntegerField(default=0)
     
+    # Informazioni di contatto (NUOVO)
+    phone_number = models.CharField(
+        max_length=20, 
+        blank=True, 
+        help_text="Numero di telefono per organizzare scambi"
+    )
+    show_phone_in_trades = models.BooleanField(
+        default=False,
+        help_text="Mostra il numero negli scambi accettati"
+    )
+    location = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Città o zona di preferenza per gli scambi"
+    )
+    bio = models.TextField(
+        max_length=500,
+        blank=True,
+        help_text="Breve descrizione del profilo"
+    )
+    
     # Preferenze
     auto_accept_counters = models.BooleanField(default=False, help_text="Accetta automaticamente le contro-proposte")
     email_notifications = models.BooleanField(default=True)
@@ -399,6 +463,26 @@ class UserTradeProfile(models.Model):
             self.is_verified_trader = True
         
         self.save()
+    
+    def get_contact_info_for_user(self, requesting_user, trade=None):
+        """
+        Restituisce informazioni di contatto se appropriate.
+        Solo negli scambi accettati/completati tra gli utenti coinvolti.
+        """
+        if not trade or requesting_user not in [trade.from_user, trade.to_user]:
+            return None
+            
+        if trade.state not in [TradeProposal.STATE_ACCEPTED, TradeProposal.STATE_COMPLETED]:
+            return None
+            
+        contact_info = {}
+        if self.show_phone_in_trades and self.phone_number:
+            contact_info['phone'] = self.phone_number
+        if self.location:
+            contact_info['location'] = self.location
+            
+        return contact_info if contact_info else None
+
 
 # SIGNAL PER CREARE PROFILO AUTOMATICO
 from django.db.models.signals import post_save
