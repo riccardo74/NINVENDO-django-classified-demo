@@ -64,6 +64,7 @@ NINVENDO-django-classified-demo/
 │   │   └── section_list.html
 │   ├── payments/
 │   │   ├── payment.success.html
+│   │   ├── payment_cancelled.html
 │   │   ├── purchase_history.html
 │   │   ├── request_detail.html
 │   │   ├── request_purchase.html
@@ -126,6 +127,7 @@ NINVENDO-django-classified-demo/
 ## Git History (last 50 commits)
 
 ```
+90df6c2 | 2025-09-03 | riccardo74 | Enhance payments: add active requests, stats, and UX improvements
 afaea22 | 2025-09-03 | riccardo74 | Add payments app and integrate barter system
 01abd74 | 2025-09-02 | riccardo74 | Merge branch 'baratto' into master
 fdf3425 | 2025-09-02 | riccardo74 | Add media URL serving in DEBUG mode
@@ -175,7 +177,6 @@ fa4bd1d | 2020-08-04 | Sergey Lyapustin | Merge pull request #107 from slyapusti
 4f521ec | 2020-05-04 | pyup-bot | Update django from 3.0.5 to 3.0.6
 7976582 | 2020-04-17 | Sergey Lyapustin | Updated Github username
 23fda2a | 2020-04-06 | Sergey Lyapustin | Merge pull request #97 from slyapustin/pyup-update-psycopg2-binary-2.8.4-to-2.8.5
-3b21409 | 2020-04-06 | pyup-bot | Update psycopg2-binary from 2.8.4 to 2.8.5
 ```
 
 
@@ -2667,7 +2668,22 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 
 logger = logging.getLogger(__name__)
 
-
+def get_context_data(self, **kwargs):
+    context = super().get_context_data(**kwargs)
+    
+    # Statistiche esistenti...
+    completed_transactions = self.get_queryset().filter(status='succeeded')
+    context['total_transactions'] = self.get_queryset().count()
+    context['completed_purchases'] = completed_transactions.count()
+    context['total_spent'] = sum(t.total_amount_euros for t in completed_transactions)
+    
+    # AGGIUNGI QUESTO: Richieste pendenti/approvate
+    context['pending_requests'] = PurchaseRequest.objects.filter(
+        buyer=self.request.user,
+        status__in=['pending', 'approved']
+    ).select_related('seller', 'item')
+    
+    return context
 class SellerRequestsView(LoginRequiredMixin, ListView):
     """Lista delle richieste di acquisto ricevute dal venditore"""
     model = PurchaseRequest
@@ -2926,21 +2942,6 @@ class PaymentTransactionDetailView(LoginRequiredMixin, DetailView):
     slug_field = 'uuid'
     slug_url_kwarg = 'uuid'
     
-    def get_object(self):
-        obj = super().get_object()
-        # Solo buyer o seller possono vedere
-        if self.request.user not in [obj.buyer, obj.seller]:
-            raise PermissionDenied("Non autorizzato")
-        return obj
-    
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        transaction = self.get_object()
-        
-        # Aggiungi info sulla richiesta collegata
-        try:
-            context['purchase_request'] = transaction.purchase_request
-        except:
 
 <<TRUNCATED: showing first 300 lines>>
 ```

@@ -1,3 +1,4 @@
+90df6c2 | 2025-09-03 | riccardo74 | Enhance payments: add active requests, stats, and UX improvements
 afaea22 | 2025-09-03 | riccardo74 | Add payments app and integrate barter system
 01abd74 | 2025-09-02 | riccardo74 | Merge branch 'baratto' into master
 fdf3425 | 2025-09-02 | riccardo74 | Add media URL serving in DEBUG mode
@@ -47,4 +48,3 @@ fa4bd1d | 2020-08-04 | Sergey Lyapustin | Merge pull request #107 from slyapusti
 4f521ec | 2020-05-04 | pyup-bot | Update django from 3.0.5 to 3.0.6
 7976582 | 2020-04-17 | Sergey Lyapustin | Updated Github username
 23fda2a | 2020-04-06 | Sergey Lyapustin | Merge pull request #97 from slyapustin/pyup-update-psycopg2-binary-2.8.4-to-2.8.5
-3b21409 | 2020-04-06 | pyup-bot | Update psycopg2-binary from 2.8.4 to 2.8.5

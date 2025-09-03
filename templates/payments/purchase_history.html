@@ -1,265 +1,134 @@
 {% extends "django_classified/_base.html" %}
-{% load i18n %}
+{% load humanize %}
 
-{% block title %}I Miei Acquisti{% endblock %}
+{% block title %}I miei acquisti{% endblock %}
 
 {% block body %}
-<div class="container">
-    <h3>💰 I Miei Acquisti</h3>
-    
-    <!-- Statistiche Riepilogo -->
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="card border-primary">
-                <div class="card-body text-center">
-                    <h4 class="text-primary">{{ pending_requests_count|default:0 }}</h4>
-                    <p class="text-muted mb-0">Richieste Pendenti</p>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card border-success">
-                <div class="card-body text-center">
-                    <h4 class="text-success">{{ approved_requests_count|default:0 }}</h4>
-                    <p class="text-muted mb-0">Richieste Approvate</p>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card border-info">
-                <div class="card-body text-center">
-                    <h4 class="text-info">{{ completed_purchases|default:0 }}</h4>
-                    <p class="text-muted mb-0">Acquisti Completati</p>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card border-dark">
-                <div class="card-body text-center">
-                    <h4 class="text-dark">€{{ total_spent|floatformat:2 }}</h4>
-                    <p class="text-muted mb-0">Totale Speso</p>
-                </div>
-            </div>
-        </div>
+<div class="container" style="max-width: 1100px;">
+  <h2 class="mt-3">🛍️ I Miei Acquisti</h2>
+
+  <!-- Stat cards -->
+  <div class="row g-3 mt-2">
+    <div class="col-6 col-md-3">
+      <div class="card p-3 shadow-sm">
+        <div class="text-muted small">I Miei Acquisti</div>
+        <div class="h4 mb-0">{{ total_transactions|default:0 }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card p-3 shadow-sm">
+        <div class="text-muted small">Richieste Pendenti</div>
+        <div class="h4 mb-0">{{ pending_requests_count|default:0 }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card p-3 shadow-sm">
+        <div class="text-muted small">Richieste Approvate</div>
+        <div class="h4 mb-0">{{ approved_requests_count|default:0 }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card p-3 shadow-sm">
+        <div class="text-muted small">Totale Speso</div>
+        <div class="h4 mb-0">€{{ total_spent|floatformat:2 }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <ul class="nav nav-tabs mb-4">
+    <li class="nav-item">
+      <a class="nav-link active" data-toggle="tab" href="#active-requests">
+        🔄 Richieste Attive
+        {% if active_requests %}
+          <span class="badge badge-warning">{{ active_requests|length }}</span>
+        {% endif %}
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" data-toggle="tab" href="#completed-purchases">
+        ✅ Acquisti Completati
+        {% if completed_purchases %}
+          <span class="badge badge-info">{{ completed_purchases }}</span>
+        {% endif %}
+      </a>
+    </li>
+  </ul>
+
+  <div class="tab-content">
+
+    <!-- Richieste attive -->
+    <div class="tab-pane fade show active" id="active-requests">
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead>
+            <tr>
+              <th>Articolo</th><th>Venditore</th><th>Prezzo</th><th>Stato</th><th>Creata il</th><th>Scade il</th><th>Azioni</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for r in active_requests %}
+            <tr>
+              <td>
+                {{ r.item.title }}<br>
+                {% if r.item.image %}<span class="text-muted">📷 Con immagine</span>{% endif %}
+              </td>
+              <td>{{ r.seller.username }}</td>
+              <td>€{{ r.item.price|floatformat:2 }}</td>
+              <td>
+                {% if r.status == 'approved' %}✅ Approvata
+                {% elif r.status == 'pending' %}⏳ In attesa
+                {% else %}{{ r.get_status_display }}{% endif %}
+              </td>
+              <td>{{ r.created_at|date:"d/m/Y" }}</td>
+              <td>{{ r.expires_at|date:"d/m/Y" }}</td>
+              <td>
+                {% if r.status == 'approved' %}
+                  <form method="post" action="{% url 'payments:create_checkout' r.uuid %}">
+                    {% csrf_token %}
+                    <button class="btn btn-sm btn-primary">Paga ora</button>
+                  </form>
+                {% else %}
+                  <a class="btn btn-sm btn-outline-secondary" href="{% url 'payments:request_detail' r.uuid %}">Dettagli</a>
+                {% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="7" class="text-muted">Nessuna richiesta attiva.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
 
-    <!-- Tab Navigation -->
-    <ul class="nav nav-tabs mb-4">
-        <li class="nav-item">
-            <a class="nav-link active" data-toggle="tab" href="#active-requests">
-                🔄 Richieste Attive 
-                {% if active_requests %}
-                    <span class="badge badge-warning">{{ active_requests|length }}</span>
-                {% endif %}
-            </a>
-        </li>
-        <li class="nav-item">
-            <a class="nav-link" data-toggle="tab" href="#completed-purchases">
-                ✅ Acquisti Completati
-                {% if transactions %}
-                    <span class="badge badge-info">{{ transactions|length }}</span>
-                {% endif %}
-            </a>
-        </li>
-    </ul>
-
-    <!-- Tab Content -->
-    <div class="tab-content">
-        
-        <!-- Richieste Attive Tab -->
-        <div class="tab-pane fade show active" id="active-requests">
-            {% if active_requests %}
-                <div class="alert alert-info">
-                    <h6>ℹ️ Richieste in Corso</h6>
-                    <p class="mb-0">Queste sono le tue richieste di acquisto che stanno ancora aspettando una risposta o il pagamento.</p>
-                </div>
-                
-                <div class="table-responsive">
-                    <table class="table table-striped">
-                        <thead class="thead-light">
-                            <tr>
-                                <th>Articolo</th>
-                                <th>Venditore</th>
-                                <th>Prezzo</th>
-                                <th>Stato</th>
-                                <th>Creata il</th>
-                                <th>Scade il</th>
-                                <th>Azioni</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for request in active_requests %}
-                            <tr>
-                                <td>
-                                    <strong>{{ request.item.title|truncatechars:40 }}</strong>
-                                    {% if request.item.image_set.first %}
-                                        <br><small class="text-muted">📷 Con immagine</small>
-                                    {% endif %}
-                                </td>
-                                <td>{{ request.seller.username }}</td>
-                                <td><strong>€{{ request.item.price|floatformat:0 }}</strong></td>
-                                <td>
-                                    {% if request.status == 'pending' %}
-                                        <span class="badge badge-warning">⏳ In Attesa</span>
-                                    {% elif request.status == 'approved' %}
-                                        <span class="badge badge-success">✅ Approvata</span>
-                                    {% endif %}
-                                </td>
-                                <td>{{ request.created_at|date:"d/m/Y" }}</td>
-                                <td>
-                                    {% if request.is_expired %}
-                                        <span class="badge badge-danger">Scaduta</span>
-                                    {% else %}
-                                        {{ request.expires_at|date:"d/m/Y" }}
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    <div class="btn-group btn-group-sm">
-                                        <a href="{% url 'payments:request_detail' request.uuid %}" 
-                                           class="btn btn-info btn-sm">👁️ Dettagli</a>
-                                        
-                                        {% if request.status == 'approved' %}
-                                            <form method="post" action="{% url 'payments:create_checkout' request.uuid %}" style="display:inline;">
-                                                {% csrf_token %}
-                                                <button type="submit" class="btn btn-success btn-sm">
-                                                    💳 Paga Ora
-                                                </button>
-                                            </form>
-                                        {% endif %}
-                                    </div>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            {% else %}
-                <div class="alert alert-secondary">
-                    <h4>📭 Nessuna Richiesta Attiva</h4>
-                    <p>Non hai richieste di acquisto in corso.</p>
-                    <a href="{% url 'django_classified:index' %}" class="btn btn-primary">🛍️ Sfoglia Annunci</a>
-                </div>
-            {% endif %}
-        </div>
-
-        <!-- Acquisti Completati Tab -->
-        <div class="tab-pane fade" id="completed-purchases">
-            {% if transactions %}
-                <div class="table-responsive">
-                    <table class="table table-striped">
-                        <thead class="thead-dark">
-                            <tr>
-                                <th>Data</th>
-                                <th>Articolo</th>
-                                <th>Venditore</th>
-                                <th>Importo</th>
-                                <th>Stato</th>
-                                <th>Azioni</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for transaction in transactions %}
-                            <tr>
-                                <td>{{ transaction.created_at|date:"d/m/Y H:i" }}</td>
-                                <td>
-                                    <strong>{{ transaction.item.title|truncatechars:30 }}</strong>
-                                    <br><small class="text-muted">#{{ transaction.uuid|slice:":8" }}</small>
-                                </td>
-                                <td>{{ transaction.seller.username }}</td>
-                                <td><strong>€{{ transaction.total_amount_euros|floatformat:2 }}</strong></td>
-                                <td>
-                                    {% if transaction.status == 'succeeded' %}
-                                        <span class="badge badge-success">✅ Completato</span>
-                                    {% elif transaction.status == 'processing' %}
-                                        <span class="badge badge-warning">⏳ In Elaborazione</span>
-                                    {% elif transaction.status == 'pending' %}
-                                        <span class="badge badge-info">⏸️ In Attesa</span>
-                                    {% elif transaction.status == 'failed' %}
-                                        <span class="badge badge-danger">❌ Fallito</span>
-                                    {% elif transaction.status == 'cancelled' %}
-                                        <span class="badge badge-secondary">🚫 Annullato</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    <div class="btn-group btn-group-sm">
-                                        <a href="{% url 'payments:payment_success' transaction.uuid %}" 
-                                           class="btn btn-secondary btn-sm">📋 Dettagli</a>
-                                        
-                                        {% if transaction.status == 'succeeded' %}
-                                            <span class="btn btn-success btn-sm disabled">✅ Pagato</span>
-                                        {% endif %}
-                                    </div>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-
-                <!-- Paginazione -->
-                {% if is_paginated %}
-                <div class="text-center">
-                    <div class="pagination">
-                        {% if page_obj.has_previous %}
-                            <a href="?page={{ page_obj.previous_page_number }}">&laquo; Precedente</a>
-                        {% endif %}
-                        
-                        Pagina {{ page_obj.number }} di {{ page_obj.paginator.num_pages }}
-                        
-                        {% if page_obj.has_next %}
-                            <a href="?page={{ page_obj.next_page_number }}">Successiva &raquo;</a>
-                        {% endif %}
-                    </div>
-                </div>
-                {% endif %}
-                
-            {% else %}
-                <div class="alert alert-secondary">
-                    <h4>📭 Nessun Acquisto Completato</h4>
-                    <p>Non hai ancora completato acquisti tramite pagamento.</p>
-                    <a href="{% url 'django_classified:index' %}" class="btn btn-primary">🛍️ Inizia a Comprare</a>
-                </div>
-            {% endif %}
-        </div>
+    <!-- Acquisti completati -->
+    <div class="tab-pane fade" id="completed-purchases">
+      <div class="table-responsive mt-3">
+        <table class="table align-middle">
+          <thead>
+            <tr><th>Data</th><th>Articolo</th><th>Venditore</th><th>Importo</th><th>Stato</th><th>Azioni</th></tr>
+          </thead>
+          <tbody>
+          {% for t in completed_transactions %}
+            <tr>
+              <td>{{ t.created_at|date:"d/m/Y H:i" }}</td>
+              <td>{{ t.item.title }}<br><small class="text-muted">#{{ t.uuid }}</small></td>
+              <td>{{ t.seller.username }}</td>
+              <td>€{{ t.total_amount_euros|floatformat:2 }}</td>
+              <td>✅ Completato</td>
+              <td>
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'payments:transaction_detail' t.uuid %}">📋 Dettagli</a>
+                <a class="btn btn-sm btn-outline-primary" href="{% url 'payments:payment_success' t.uuid %}">🧾 Ricevuta</a>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" class="text-muted">Nessun acquisto completato.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
-    
-    <!-- Link Utili -->
-    <div class="row mt-4">
-        <div class="col-md-12">
-            <div class="card border-light">
-                <div class="card-body">
-                    <h6>🔗 Link Utili</h6>
-                    <div class="btn-group">
-                        <a href="{% url 'payments:seller_setup' %}" class="btn btn-outline-primary">
-                            ⚙️ Impostazioni Venditore
-                        </a>
-                        <a href="{% url 'payments:sales_history' %}" class="btn btn-outline-success">
-                            💸 Le Mie Vendite
-                        </a>
-                        <a href="{% url 'django_classified:index' %}" class="btn btn-outline-info">
-                            🏠 Torna alla Home
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+
+  </div>
 </div>
-
-<script>
-// Auto-refresh richieste ogni 30 secondi se ci sono richieste attive
-{% if active_requests %}
-setTimeout(function() {
-    location.reload();
-}, 30000);
-{% endif %}
-
-// Tab switching con Bootstrap
-$(document).ready(function(){
-    $('.nav-tabs a').click(function(e) {
-        e.preventDefault();
-        $(this).tab('show');
-    });
-});
-</script>
 {% endblock %}
