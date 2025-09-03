@@ -48,6 +48,14 @@ urlpatterns = [
 
     # ⭐ NUOVO MODULO PAGAMENTI
     path('payments/', include('payments.urls', namespace='payments')),  # <-- Aggiungi questa riga
+
+    # Debug Cloudinary (solo in sviluppo)
+    path('debug/cloudinary/', TemplateView.as_view(template_name='debug_cloudinary.html'), name='debug_cloudinary'),
+
+   
+
+    path('debug/cloudinary/', TemplateView.as_view(template_name='debug_simple.html'), name='debug_cloudinary'),
+]
 ]
 
 

@@ -1,0 +1,159 @@
+{% extends "django_classified/_base.html" %}
+{% load cloudinary %}
+
+{% block title %}🔧 Debug Cloudinary - {{ SITE_NAME }}{% endblock %}
+
+{% block body %}
+<div class="container mt-4">
+    <h1>🔧 Debug Cloudinary</h1>
+    
+    <!-- Info Sito -->
+    <div class="card mb-4">
+        <div class="card-header bg-info text-white">
+            <h5>🏠 Configurazione Sito</h5>
+        </div>
+        <div class="card-body">
+            <p><strong>Nome:</strong> {{ SITE_NAME }}</p>
+            <p><strong>Descrizione:</strong> {{ SITE_DESCRIPTION }}</p>
+            <p><strong>Tagline:</strong> {{ SITE_TAGLINE }}</p>
+            <p><strong>URL:</strong> {{ SITE_URL }}</p>
+            <p><strong>Debug Mode:</strong> {{ DEBUG|yesno:"✅ Attivo,❌ Disattivo" }}</p>
+        </div>
+    </div>
+
+    <!-- Status Cloudinary -->
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5>☁️ Status Cloudinary</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <p><strong>Configurato:</strong> 
+                        <span class="badge badge-{{ CLOUDINARY_CONFIGURED|yesno:'success,danger' }}">
+                            {{ CLOUDINARY_CONFIGURED|yesno:"✅ SI,❌ NO" }}
+                        </span>
+                    </p>
+                    <p><strong>Attivo:</strong> 
+                        <span class="badge badge-{{ CLOUDINARY_ACTIVE|yesno:'success,warning' }}">
+                            {{ CLOUDINARY_ACTIVE|yesno:"🌥️ Cloudinary,📁 Filesystem" }}
+                        </span>
+                    </p>
+                    <p><strong>Dev Mode:</strong> 
+                        <span class="badge badge-{{ USE_CLOUDINARY_IN_DEV|yesno:'info,secondary' }}">
+                            {{ USE_CLOUDINARY_IN_DEV|yesno:"🧪 Test Mode,📁 Locale" }}
+                        </span>
+                    </p>
+                </div>
+                <div class="col-md-6">
+                    {% if CLOUDINARY_TRANSFORMATIONS %}
+                        <p><strong>Trasformazioni:</strong></p>
+                        <ul class="small">
+                            {% for name, config in CLOUDINARY_TRANSFORMATIONS.items %}
+                                <li>{{ name }}: {{ config.width }}x{{ config.height }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Test Template Tags -->
+    {% if CLOUDINARY_CONFIGURED %}
+        <div class="card mb-4">
+            <div class="card-header bg-success text-white">
+                <h5>🏷️ Test Template Tags</h5>
+            </div>
+            <div class="card-body">
+                <p>I template tags Cloudinary sono disponibili:</p>
+                <ul>
+                    <li>✅ <code>{% templatetag openblock %} load cloudinary_tags {% templatetag closeblock %}</code></li>
+                    <li>✅ <code>{% templatetag openblock %} cloudinary_img item.image {% templatetag closeblock %}</code></li>
+                    <li>✅ <code>{% templatetag openblock %} cloudinary_url item.image 'medium' {% templatetag closeblock %}</code></li>
+                </ul>
+                
+                <!-- Test immagine se disponibile -->
+                {% comment %}
+                Se hai un'immagine di test puoi decommentare:
+                {% if test_item.image %}
+                    <div class="mt-3">
+                        <h6>Esempio Immagine:</h6>
+                        {% cloudinary_img test_item.image "Test image" "img-fluid" "medium" %}
+                    </div>
+                {% endif %}
+                {% endcomment %}
+            </div>
+        </div>
+    {% else %}
+        <div class="card mb-4">
+            <div class="card-header bg-warning text-white">
+                <h5>⚠️ Cloudinary Non Configurato</h5>
+            </div>
+            <div class="card-body">
+                <p>Per attivare Cloudinary:</p>
+                <ol>
+                    <li>Configura le variabili d'ambiente nel <code>.env</code>:
+                        <pre class="bg-light p-2 mt-2">
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+USE_CLOUDINARY_IN_DEV=True</pre>
+                    </li>
+                    <li>Riavvia il server: <code>python manage.py runserver</code></li>
+                    <li>Testa: <code>python manage.py cloudinary_admin status</code></li>
+                </ol>
+            </div>
+        </div>
+    {% endif %}
+
+    <!-- Comandi Utili -->
+    <div class="card mb-4">
+        <div class="card-header bg-dark text-white">
+            <h5>🛠️ Comandi Utili</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>Verifica:</h6>
+                    <pre class="bg-light p-2 small">python manage.py cloudinary_admin status</pre>
+                    
+                    <h6>Test:</h6>
+                    <pre class="bg-light p-2 small">python manage.py cloudinary_admin test</pre>
+                </div>
+                <div class="col-md-6">
+                    <h6>Migrazione:</h6>
+                    <pre class="bg-light p-2 small">python manage.py cloudinary_admin migrate --limit 10</pre>
+                    
+                    <h6>Statistiche:</h6>
+                    <pre class="bg-light p-2 small">python manage.py cloudinary_admin stats</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Link Utili -->
+    <div class="text-center">
+        <a href="/" class="btn btn-primary">🏠 Torna alla Home</a>
+        <a href="/admin/" class="btn btn-secondary">🔧 Admin</a>
+        {% if user.is_staff %}
+            <a href="{% url 'django_classified:item-new' %}" class="btn btn-success">➕ Testa Upload Immagine</a>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+    pre {
+        font-size: 0.9em;
+        border-radius: 4px;
+    }
+    
+    .badge {
+        font-size: 0.9em;
+    }
+    
+    .card-header h5 {
+        margin-bottom: 0;
+    }
+</style>
+{% endblock %}

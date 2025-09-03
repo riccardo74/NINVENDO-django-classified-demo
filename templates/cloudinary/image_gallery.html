@@ -1,0 +1,74 @@
+{% load cloudinary_tags %}
+
+<div class="cloudinary-gallery">
+    <div class="row">
+        {% for image in images %}
+            <div class="{{ thumbnail_class }} mb-3">
+                <div class="image-container position-relative">
+                    {% if lightbox %}
+                        <a href="{% cloudinary_url image 'large' %}" 
+                           data-lightbox="gallery" 
+                           data-title="Immagine {{ forloop.counter }}">
+                            {% cloudinary_img image "Immagine prodotto" "img-fluid rounded shadow-sm" "medium" %}
+                        </a>
+                    {% else %}
+                        {% cloudinary_img image "Immagine prodotto" "img-fluid rounded shadow-sm" "medium" %}
+                    {% endif %}
+                    
+                    <!-- Overlay info se necessario -->
+                    <div class="image-overlay position-absolute" style="bottom: 5px; right: 5px;">
+                        <span class="badge badge-dark">{{ forloop.counter }}/{{ images.count }}</span>
+                    </div>
+                </div>
+            </div>
+        {% empty %}
+            <div class="col-12 text-center">
+                <div class="no-images-placeholder p-4 bg-light rounded">
+                    <i class="fas fa-images fa-3x text-muted mb-2"></i>
+                    <p class="text-muted mb-0">Nessuna immagine disponibile</p>
+                </div>
+            </div>
+        {% endfor %}
+    </div>
+</div>
+
+{% if lightbox and images %}
+    <!-- Includi Lightbox CSS/JS se non già presente -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.3/css/lightbox.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.3/js/lightbox.min.js"></script>
+    
+    <script>
+        // Configurazione Lightbox
+        lightbox.option({
+            'resizeDuration': 200,
+            'wrapAround': true,
+            'fadeDuration': 300
+        });
+    </script>
+{% endif %}
+
+<style>
+    .cloudinary-gallery .image-container {
+        overflow: hidden;
+        border-radius: 0.5rem;
+        transition: transform 0.3s ease;
+    }
+    
+    .cloudinary-gallery .image-container:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    
+    .no-images-placeholder {
+        border: 2px dashed #dee2e6;
+    }
+    
+    .image-overlay {
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+    
+    .image-container:hover .image-overlay {
+        opacity: 1;
+    }
+</style>

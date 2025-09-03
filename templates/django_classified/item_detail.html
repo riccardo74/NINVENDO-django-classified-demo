@@ -1,7 +1,26 @@
 {% extends "django_classified/_base.html" %}
 {% load i18n %}
+{% comment %}⭐ CARICA CLOUDINARY TAGS SE DISPONIBILI{% endcomment %}
+{% load cloudinary_tags %}
 
 {% block title %}{{ item.title }} - {{ item.price }}€{% endblock %}
+
+{% block meta_keywords %}{{ item.title }}, {{ item.area.title }}, {{ item.category.title }}, {{ item.group.title }}{% endblock meta_keywords %}
+
+{% block meta_og %}
+    <meta property="og:title" content="{{ item.title }}" />
+    <meta property="og:description" content="{{ item.description|truncatewords:30|striptags }}" />
+    {% comment %}⭐ USA CLOUDINARY PER IMMAGINI SOCIAL SE DISPONIBILE{% endcomment %}
+    {% if item.image %}
+        {% if CLOUDINARY_CONFIGURED %}
+            <meta property="og:image" content="{% cloudinary_share_image item.image 'large' %}" />
+        {% else %}
+            <meta property="og:image" content="{{ request.build_absolute_uri }}{{ item.image.url }}" />
+        {% endif %}
+    {% endif %}
+    <meta property="og:url" content="{{ request.build_absolute_uri }}" />
+    <meta property="og:type" content="product" />
+{% endblock %}
 
 {% block body %}
 <div class="container">
@@ -19,17 +38,44 @@
                 <h3 class="mb-0">💶 {{ item.price }}€</h3>
             </div>
             
-            <!-- Galleria immagini -->
+            <!-- 📷 GALLERIA IMMAGINI CON CLOUDINARY OTTIMIZZATA -->
             {% if item.image_set.all %}
                 <div class="row mb-4">
                     {% for image in item.image_set.all %}
                         <div class="col-md-4 mb-2">
-                            <a href="{{ image.file.url }}" data-lightbox="gallery">
-                                <img src="{{ image.file.url }}" alt="{{ item.title }}" 
-                                     class="img-fluid rounded">
-                            </a>
+                            {% comment %}⭐ USA CLOUDINARY SE CONFIGURATO, ALTRIMENTI FALLBACK{% endcomment %}
+                            {% if CLOUDINARY_CONFIGURED %}
+                                <a href="{% cloudinary_url image.file 'large' %}" data-lightbox="gallery" data-title="Immagine {{ forloop.counter }}">
+                                    {% cloudinary_img image.file item.title "img-fluid rounded shadow-sm" "medium" %}
+                                </a>
+                            {% else %}
+                                <a href="{{ image.file.url }}" data-lightbox="gallery">
+                                    <img src="{{ image.file.url }}" alt="{{ item.title }}" 
+                                         class="img-fluid rounded shadow-sm" loading="lazy">
+                                </a>
+                            {% endif %}
                         </div>
                     {% endfor %}
+                </div>
+            {% elif item.image %}
+                <!-- Immagine singola principale -->
+                <div class="main-image-container mb-4">
+                    {% if CLOUDINARY_CONFIGURED %}
+                        <a href="{% cloudinary_url item.image 'large' %}" data-lightbox="main-image">
+                            {% cloudinary_img item.image item.title "img-fluid rounded shadow-lg" "large" %}
+                        </a>
+                    {% else %}
+                        <a href="{{ item.image.url }}" data-lightbox="main-image">
+                            <img src="{{ item.image.url }}" alt="{{ item.title }}" 
+                                 class="img-fluid rounded shadow-lg" loading="lazy">
+                        </a>
+                    {% endif %}
+                </div>
+            {% else %}
+                <!-- Nessuna immagine -->
+                <div class="no-image-placeholder text-center bg-light rounded p-5 mb-4">
+                    <i class="fas fa-image fa-3x text-muted mb-3"></i>
+                    <p class="text-muted">Nessuna immagine disponibile</p>
                 </div>
             {% endif %}
             
@@ -154,7 +200,22 @@
                     <h6>👤 Informazioni Venditore</h6>
                 </div>
                 <div class="card-body">
-                    <p><strong>{{ item.user.username }}</strong></p>
+                    <div class="seller-profile d-flex align-items-center mb-3">
+                        <div class="seller-avatar me-3">
+                            <div class="avatar-circle bg-primary text-white d-flex align-items-center justify-content-center">
+                                {{ item.user.username|first|upper }}
+                            </div>
+                        </div>
+                        <div>
+                            <h6 class="mb-1">{{ item.user.username }}</h6>
+                            {% if item.user.trade_profile %}
+                                <small class="text-muted">
+                                    ⭐ {{ item.user.trade_profile.average_rating|floatformat:1 }}/5
+                                    ({{ item.user.trade_profile.total_feedbacks_received }} recensioni)
+                                </small>
+                            {% endif %}
+                        </div>
+                    </div>
                     
                     {% if item.user.seller_profile %}
                         {% if item.user.seller_profile.total_sales > 0 %}
@@ -181,7 +242,39 @@
                             <span class="badge badge-secondary">❌ Solo Scambi</span><br>
                         {% endif %}
                         <span class="badge badge-info">🔄 Baratto</span>
+                        
+                        <!-- Statistiche Scambi -->
+                        {% if item.user.trade_profile %}
+                            <div class="seller-stats mt-2">
+                                <small class="text-muted">
+                                    🔄 {{ item.user.trade_profile.total_trades_completed }} scambi completati
+                                </small>
+                            </div>
+                        {% endif %}
                     {% endif %}
+                </div>
+            </div>
+            
+            <!-- 📤 CONDIVISIONE SOCIAL -->
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h6>📤 Condividi</h6>
+                </div>
+                <div class="card-body">
+                    <div class="btn-group btn-group-sm btn-block" role="group">
+                        <button type="button" class="btn btn-outline-primary" onclick="shareOnFacebook()">
+                            📘 Facebook
+                        </button>
+                        <button type="button" class="btn btn-outline-info" onclick="shareOnTwitter()">
+                            🐦 Twitter
+                        </button>
+                        <button type="button" class="btn btn-outline-success" onclick="shareOnWhatsApp()">
+                            💚 WhatsApp
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="copyLink()">
+                            🔗 Link
+                        </button>
+                    </div>
                 </div>
             </div>
             
@@ -255,6 +348,26 @@
                     </div>
                 </div>
             </div>
+
+            <!-- 🔧 DEBUG CLOUDINARY (solo per admin/debug) -->
+            {% if user.is_staff and DEBUG %}
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h6>🔧 Debug Cloudinary</h6>
+                    </div>
+                    <div class="card-body">
+                        <small class="text-muted">
+                            Status: {% if CLOUDINARY_CONFIGURED %}✅ Configurato{% else %}❌ Non configurato{% endif %}<br>
+                            {% if item.image %}
+                                Original: {{ item.image.url }}<br>
+                                {% if CLOUDINARY_CONFIGURED %}
+                                    Cloudinary: {% cloudinary_url item.image 'medium' %}
+                                {% endif %}
+                            {% endif %}
+                        </small>
+                    </div>
+                </div>
+            {% endif %}
         </div>
     </div>
     
@@ -263,7 +376,110 @@
     
 </div>
 
-<!-- Script per miglioramenti UX -->
+<!-- Modal Contatto -->
+<div class="modal fade" id="contactModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">📞 Contatta {{ item.user.username }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Per contattare il venditore:</p>
+                <ul>
+                    <li>💬 <strong>Proponi uno scambio</strong> per chattare direttamente nella piattaforma</li>
+                    <li>💰 <strong>Richiedi acquisto</strong> se preferisci comprare</li>
+                    {% if item.user.email %}
+                        <li>📧 Email: <a href="mailto:{{ item.user.email }}">{{ item.user.email }}</a></li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- CSS Styling -->
+<style>
+    .main-image-container {
+        position: relative;
+        overflow: hidden;
+        border-radius: 0.5rem;
+    }
+    
+    .main-image-container img,
+    .item-image-container img {
+        transition: transform 0.3s ease;
+    }
+    
+    .main-image-container:hover img,
+    .item-image-container:hover img {
+        transform: scale(1.05);
+    }
+    
+    .seller-profile .avatar-circle {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        font-size: 1.5rem;
+        font-weight: bold;
+    }
+    
+    .no-image-placeholder {
+        min-height: 300px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    
+    .btn-group .btn {
+        flex: 1;
+    }
+    
+    @media (max-width: 768px) {
+        .btn-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .btn-group .btn {
+            margin-bottom: 5px;
+            border-radius: 4px !important;
+        }
+        
+        .seller-profile {
+            text-align: center;
+        }
+        
+        .seller-profile .avatar-circle {
+            margin: 0 auto 10px;
+        }
+    }
+
+    /* Lightbox improvements */
+    [data-lightbox] {
+        cursor: pointer;
+        transition: opacity 0.3s ease;
+    }
+    
+    [data-lightbox]:hover {
+        opacity: 0.9;
+    }
+
+    /* Image loading optimization */
+    img[loading="lazy"] {
+        background: #f8f9fa;
+        min-height: 100px;
+    }
+    
+    /* Social sharing improvements */
+    .btn-group-sm .btn {
+        font-size: 0.8rem;
+        padding: 0.25rem 0.4rem;
+    }
+</style>
+
+<!-- JavaScript per funzionalità -->
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     // Preview commissioni in tempo reale
@@ -286,10 +502,139 @@ document.addEventListener('DOMContentLoaded', function() {
         );
     }
     
-    // Inizializza tooltip Bootstrap
-    if (typeof $!== 'undefined') {
+    // Inizializza tooltip Bootstrap se disponibile
+    if (typeof $ !== 'undefined' && $.fn.tooltip) {
         $('[data-toggle="tooltip"]').tooltip();
     }
+    
+    // Lazy loading images fallback per browser non supportati
+    if ('loading' in HTMLImageElement.prototype === false) {
+        // Implementa lazy loading manuale se necessario
+        console.log('Lazy loading non supportato, usa fallback');
+    }
 });
+
+// Funzioni condivisione social
+function showContactModal() {
+    const modal = new bootstrap.Modal(document.getElementById('contactModal'));
+    modal.show();
+}
+
+function shareOnFacebook() {
+    const url = encodeURIComponent(window.location.href);
+    const text = encodeURIComponent('{{ item.title|escapejs }} - {{ item.price }}€ su {{ DCF_SITE_NAME }}');
+    window.open(`https://www.facebook.com/sharer/sharer.php?u=${url}&quote=${text}`, '_blank', 'width=600,height=400');
+}
+
+function shareOnTwitter() {
+    const url = encodeURIComponent(window.location.href);
+    const text = encodeURIComponent(`{{ item.title|escapejs }} - {{ item.price }}€ su {{ DCF_SITE_NAME }}`);
+    window.open(`https://twitter.com/intent/tweet?url=${url}&text=${text}`, '_blank', 'width=600,height=400');
+}
+
+function shareOnWhatsApp() {
+    const url = encodeURIComponent(window.location.href);
+    const text = encodeURIComponent(`{{ item.title|escapejs }} - {{ item.price }}€ su {{ DCF_SITE_NAME }}: ${window.location.href}`);
+    
+    // Rileva se è mobile o desktop
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    if (isMobile) {
+        window.open(`whatsapp://send?text=${text}`, '_blank');
+    } else {
+        window.open(`https://web.whatsapp.com/send?text=${text}`, '_blank');
+    }
+}
+
+function copyLink() {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(window.location.href).then(function() {
+            // Mostra feedback visivo
+            showToast('Link copiato negli appunti!', 'success');
+        }).catch(function() {
+            fallbackCopyLink();
+        });
+    } else {
+        fallbackCopyLink();
+    }
+}
+
+function fallbackCopyLink() {
+    // Fallback per browser più vecchi
+    const textArea = document.createElement('textarea');
+    textArea.value = window.location.href;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-999999px';
+    textArea.style.top = '-999999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+        document.execCommand('copy');
+        showToast('Link copiato negli appunti!', 'success');
+    } catch (err) {
+        showToast('Impossibile copiare il link', 'error');
+    }
+    
+    document.body.removeChild(textArea);
+}
+
+function showToast(message, type = 'info') {
+    // Crea toast notification semplice
+    const toast = document.createElement('div');
+    toast.className = `alert alert-${type === 'success' ? 'success' : type === 'error' ? 'danger' : 'info'} toast-notification`;
+    toast.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 9999;
+        min-width: 250px;
+        opacity: 0;
+        transform: translateX(100%);
+        transition: all 0.3s ease;
+    `;
+    toast.innerHTML = `
+        <div class="d-flex align-items-center">
+            <span class="me-2">${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'}</span>
+            <span>${message}</span>
+            <button type="button" class="btn-close ms-auto" onclick="this.parentElement.parentElement.remove()"></button>
+        </div>
+    `;
+    
+    document.body.appendChild(toast);
+    
+    // Anima l'ingresso
+    setTimeout(() => {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateX(0)';
+    }, 100);
+    
+    // Rimuovi automaticamente dopo 3 secondi
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(100%)';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// Inizializzazione Lightbox (se presente)
+if (typeof lightbox !== 'undefined') {
+    lightbox.option({
+        'resizeDuration': 200,
+        'wrapAround': true,
+        'fadeDuration': 300,
+        'imageFadeDuration': 300,
+        'maxWidth': 1200,
+        'maxHeight': 800
+    });
+}
 </script>
+
+<!-- Includi Lightbox CSS/JS se non già presente -->
+{% comment %}⭐ LIGHTBOX INCLUSO SOLO SE NECESSARIO{% endcomment %}
+{% if item.image_set.all or item.image %}
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.3/css/lightbox.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.3/js/lightbox.min.js"></script>
+{% endif %}
 {% endblock %}

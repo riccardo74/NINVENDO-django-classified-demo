@@ -1,6 +1,5 @@
 # -*- coding:utf-8 -*-
 import os
-
 import environ
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -17,7 +16,6 @@ env.read_env(str(os.path.join(BASE_DIR, ".env")))
 
 DEBUG = env('DEBUG')
 SECRET_KEY = env('SECRET_KEY')
-
 
 ADMINS = (
     ('Demo Classified Admin', os.environ.get('ADMIN_EMAIL', 'admin@example.com')),
@@ -48,70 +46,126 @@ CACHES = {
     }
 }
 
-# Local time zone for this installation. Choices can be found here:
-# http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
-# although not all choices may be available on all operating systems.
-# On Unix systems, a value of None will cause Django to use the same
-# timezone as the operating system.
-# If running in a Windows environment this must be set to the same as your
-# system time zone.
+# Local time zone for this installation.
 TIME_ZONE = 'UTC'
-
-# Language code for this installation. All choices can be found here:
-# http://www.i18nguy.com/unicode/language-identifiers.html
 LANGUAGE_CODE = 'en-us'
-
 SITE_ID = 1
-
-# If you set this to False, Django will make some optimizations so as not
-# to load the internationalization machinery.
 USE_I18N = True
-
-# If you set this to False, Django will not format dates, numbers and
-# calendars according to the current locale
 USE_L10N = True
-
 USE_TZ = True
-# Absolute filesystem path to the directory that will hold user-uploaded files.
-# Example: '/home/media/media.lawrence.com/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
-# URL that handles the media served from MEDIA_ROOT. Make sure to use a
-# trailing slash.
-# Examples: 'http://media.lawrence.com/media/', 'http://example.com/media/'
+# ============================================
+# CONFIGURAZIONE CLOUDINARY PER IMMAGINI
+# ============================================
+
+# Configurazione Cloudinary
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': env('CLOUDINARY_CLOUD_NAME', default='your_cloud_name'),
+    'API_KEY': env('CLOUDINARY_API_KEY', default='your_api_key'), 
+    'API_SECRET': env('CLOUDINARY_API_SECRET', default='your_api_secret'),
+    'SECURE': True,  # Usa HTTPS
+}
+
+# Solo se Cloudinary è configurato correttamente
+if (CLOUDINARY_STORAGE['CLOUD_NAME'] != 'your_cloud_name' and 
+    CLOUDINARY_STORAGE['API_KEY'] != 'your_api_key'):
+    
+    import cloudinary
+    import cloudinary.uploader
+    import cloudinary.api
+    
+    cloudinary.config(
+        cloud_name=CLOUDINARY_STORAGE['CLOUD_NAME'],
+        api_key=CLOUDINARY_STORAGE['API_KEY'],
+        api_secret=CLOUDINARY_STORAGE['API_SECRET'],
+        secure=CLOUDINARY_STORAGE['SECURE']
+    )
+    
+    # Configurazioni Cloudinary avanzate
+    CLOUDINARY_STORAGE.update({
+        'FOLDER': 'ninvendo',  # Cartella principale
+        'FORMAT': 'auto',      # Formato automatico (WebP quando possibile)
+        'QUALITY': 'auto:best',  # Qualità automatica ottimizzata
+        'FETCH_FORMAT': 'auto', # Formato di fetch automatico
+        'FLAGS': 'progressive', # Caricamento progressivo
+    })
+
+# ============================================
+# CONFIGURAZIONI CLOUDINARY TRASFORMAZIONI
+# ============================================
+
+# Preset di trasformazioni per diverse dimensioni
+CLOUDINARY_TRANSFORMATIONS = {
+    'thumbnail': {
+        'width': 150,
+        'height': 150,
+        'crop': 'fill',
+        'quality': 'auto:good',
+        'format': 'auto'
+    },
+    'medium': {
+        'width': 400, 
+        'height': 300,
+        'crop': 'fill',
+        'quality': 'auto:good',
+        'format': 'auto'
+    },
+    'large': {
+        'width': 800,
+        'height': 600,
+        'crop': 'fit',
+        'quality': 'auto:best',
+        'format': 'auto'
+    },
+    'trade_message': {
+        'width': 300,
+        'height': 300,
+        'crop': 'fit',
+        'quality': 'auto:good',
+        'format': 'auto'
+    },
+    'hero': {
+        'width': 1200,
+        'height': 400,
+        'crop': 'fill',
+        'quality': 'auto:best',
+        'format': 'auto'
+    }
+}
+
+# ============================================
+# MEDIA E STATIC FILES
+# ============================================
+
+# Absolute filesystem path to the directory that will hold user-uploaded files.
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 MEDIA_URL = "/media/"
 
 # Absolute path to the directory static files should be collected to.
-# Don't put anything in this directory yourself; store your static files
-# in apps' 'static/' subdirectories and in STATICFILES_DIRS.
-# Example: '/home/media/media.lawrence.com/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
-
-# URL prefix for static files.
-# Example: 'http://media.lawrence.com/static/'
 STATIC_URL = '/static/'
-
-# URL prefix for admin static files -- CSS, JavaScript and images.
-# Make sure to use a trailing slash.
-# Examples: 'http://foo.com/static/admin/', '/static/admin/'.
 
 # Additional locations of static files
 STATICFILES_DIRS = (
-
     # Put strings here, like '/home/html/static' or 'C:/www/django/static'.
-    # Always use forward slashes, even on Windows.
-    # Don't forget to use absolute paths, not relative paths.
 )
 
-# Usa Cloudinary per i MEDIA (file caricati dagli utenti)
-#DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
+# Configurazioni upload immagini
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB max per immagine
+ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
 
-# Se vuoi (non obbligatorio) servire anche gli static con Cloudinary:
-# STATICFILES_STORAGE = "cloudinary_storage.storage.StaticHashedCloudinaryStorage"
+# Configurazione Storage - MANTENIAMO LA LOGICA ORIGINALE
+# Usa Cloudinary per i MEDIA (file caricati dagli utenti) SOLO SE CONFIGURATO
+if not DEBUG and (CLOUDINARY_STORAGE['CLOUD_NAME'] != 'your_cloud_name'):
+    # PRODUZIONE: Cloudinary per media files se configurato
+    DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
+else:
+    # SVILUPPO O CLOUDINARY NON CONFIGURATO: Filesystem locale
+    DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"
 
 STORAGES = {
     "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "BACKEND": DEFAULT_FILE_STORAGE,
     },
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
@@ -154,7 +208,11 @@ TEMPLATES = [
                 'social_django.context_processors.login_redirect',
 
                 # Django Classified context processors
-                'django_classified.context_processors.common_values'
+                'django_classified.context_processors.common_values',
+                
+                # ⭐ CLOUDINARY CONTEXT PROCESSOR (se necessario)
+                'project.context_processors.site_config',
+                'project.templatetags.cloudinary_tags.cloudinary_context',
             ],
             'debug': True
         },
@@ -170,7 +228,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.sitemaps',
     'django.contrib.sites',
-    
+    'django.contrib.staticfiles',  # ⭐ AGGIUNTO - era mancante!
 
     'bootstrapform',
     'sorl.thumbnail',
@@ -183,15 +241,17 @@ INSTALLED_APPS = [
     'widget_tweaks',        # django-widget-tweaks
     'django_extensions',    # utilities per sviluppo
 
+    # ⭐ CLOUDINARY SUPPORT - ORDINE CORRETTO
+    'cloudinary_storage',   # DEVE essere prima di cloudinary
+    'cloudinary',          # cloudinary
+
     'demo',
     'registration',  
     "trade",
     'payments',
-
-    "cloudinary",
-    "cloudinary_storage",
-    # se usi admin/upload via forms:
-    "django.contrib.staticfiles"
+    
+    # ⭐ PROJECT APP (per management commands e utilities) - SE NECESSARIO
+    'project',
 ]
 
 # ⭐ CONFIGURAZIONI CRISPY FORMS
@@ -203,7 +263,6 @@ EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # development
 # EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'  # production
 
 ACCOUNT_ACTIVATION_DAYS = 7  # per backend 'default' (con email)
-
 
 LOGIN_REDIRECT_URL = '/'
 LOGIN_URL = '/login/'
@@ -221,9 +280,6 @@ SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.environ.get('SOCIAL_AUTH_GOOGLE_OAUTH2_SEC
 SOCIAL_AUTH_REDIRECT_IS_HTTPS = env.bool('SOCIAL_AUTH_REDIRECT_IS_HTTPS', default=False)
 
 # ---- Social Auth: Facebook (già presente, opzionale) ----
-# You need to obtain Facebook Keys
-# Check docs for more info here:
-# https://python-social-auth.readthedocs.io/en/latest/backends/facebook.html
 SOCIAL_AUTH_FACEBOOK_KEY = os.environ.get('SOCIAL_AUTH_FACEBOOK_KEY')
 SOCIAL_AUTH_FACEBOOK_SECRET = os.environ.get('SOCIAL_AUTH_FACEBOOK_SECRET')
 SOCIAL_AUTH_FACEBOOK_SCOPE = ['email']
@@ -231,7 +287,7 @@ SOCIAL_AUTH_FACEBOOK_PROFILE_EXTRA_PARAMS = {
     'fields': 'id, name, email'
 }
 
-SOCIAL_AUTH_EMAIL_FORM_HTML = 'demo/email_signup.html'
+SOCIAL_AUTH_EMAIL_FORM_HTML = 'demo/email_signup.html'  # ⭐ MANTENUTO ORIGINALE
 SOCIAL_AUTH_EMAIL_VALIDATION_URL = '/email-sent/'
 
 SOCIAL_AUTH_PIPELINE = (
@@ -249,7 +305,7 @@ SOCIAL_AUTH_PIPELINE = (
     'social_core.pipeline.debug.debug'
 )
 
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'demo@example.com')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'demo@example.com')  # ⭐ MANTENUTO ORIGINALE
 
 DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
 
@@ -260,14 +316,11 @@ DCF_CURRENCY = 'EUR'
 DCF_DISPLAY_EMPTY_GROUPS = True
 GOOGLE_ANALYTICS_PROPERTY_ID = os.environ.get('GOOGLE_ANALYTICS_PROPERTY_ID')
 
-
-# Aggiungi questa sezione alla fine del tuo project/settings.py
-
 # ============================================
-# CONFIGURAZIONE STRIPE PAGAMENTI (TEMPORANEA)
+# CONFIGURAZIONE STRIPE PAGAMENTI
 # ============================================
 
-# Configurazione temporanea per testing (sostituisci con chiavi reali)
+# Configurazione per testing (sostituisci con chiavi reali)
 STRIPE_PUBLIC_KEY = env('STRIPE_PUBLIC_KEY', default='pk_test_placeholder')
 STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='sk_test_placeholder') 
 STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='whsec_placeholder')
@@ -279,3 +332,49 @@ STRIPE_DOMAIN = env('STRIPE_DOMAIN', default='http://127.0.0.1:8000')
 PLATFORM_FEE_PERCENTAGE = env.float('PLATFORM_FEE_PERCENTAGE', default=3.0)
 STRIPE_FEE_PERCENTAGE = env.float('STRIPE_FEE_PERCENTAGE', default=1.4)
 STRIPE_FEE_FIXED_CENTS = env.int('STRIPE_FEE_FIXED_CENTS', default=25)
+
+# ============================================
+# LOGGING CONFIGURATION (OPZIONALE)
+# ============================================
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple'
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'cloudinary': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
+
+# Crea directory logs se non esiste (opzionale)
+LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+if not os.path.exists(LOGS_DIR):
+    os.makedirs(LOGS_DIR, exist_ok=True)
