@@ -64,9 +64,14 @@ NINVENDO-django-classified-demo/
 │   │   └── section_list.html
 │   ├── payments/
 │   │   ├── payment.success.html
+│   │   ├── purchase_history.html
 │   │   ├── request_detail.html
 │   │   ├── request_purchase.html
-│   │   └── seller_setup.html
+│   │   ├── sales_history.html
+│   │   ├── seller_requests.html
+│   │   ├── seller_setup.html
+│   │   ├── template_seller_setup.html
+│   │   └── transaction_detail.html
 │   ├── registration/
 │   │   ├── registration_complete.html
 │   │   └── registration_form.html
@@ -121,6 +126,7 @@ NINVENDO-django-classified-demo/
 ## Git History (last 50 commits)
 
 ```
+afaea22 | 2025-09-03 | riccardo74 | Add payments app and integrate barter system
 01abd74 | 2025-09-02 | riccardo74 | Merge branch 'baratto' into master
 fdf3425 | 2025-09-02 | riccardo74 | Add media URL serving in DEBUG mode
 2b09447 | 2025-09-02 | riccardo74 | Aggiungi supporto immagini alla messaggistica degli scambi
@@ -170,7 +176,6 @@ fa4bd1d | 2020-08-04 | Sergey Lyapustin | Merge pull request #107 from slyapusti
 7976582 | 2020-04-17 | Sergey Lyapustin | Updated Github username
 23fda2a | 2020-04-06 | Sergey Lyapustin | Merge pull request #97 from slyapustin/pyup-update-psycopg2-binary-2.8.4-to-2.8.5
 3b21409 | 2020-04-06 | pyup-bot | Update psycopg2-binary from 2.8.4 to 2.8.5
-d73b732 | 2020-04-01 | Sergey Lyapustin | Merge pull request #96 from slyapustin/pyup-update-django-3.0.4-to-3.0.5
 ```
 
 
@@ -438,23 +443,34 @@ d73b732 | 2020-04-01 | Sergey Lyapustin | Merge pull request #96 from slyapustin
               </a>
               
             <ul class="dropdown-menu">
+                <!-- SEZIONE PERSONALE -->
                 <li><a href="{% url 'django_classified:user-items' %}">{% trans "My items" %} ({{ user.item_set.count }})</a></li>
-                
-                <!-- Un solo link profilo -->
                 <li><a href="{% url 'trade:profile' %}">🔧 Il Mio Profilo</a></li>
 
-                <!-- Link scambi -->
-                <li><a href="{% url 'trade:inbox' %}">🔄 Scambi (ricevuti)</a></li>
-                <li><a href="{% url 'trade:sent' %}">🔄 Scambi (inviati)</a></li>
-
                 <li class="divider"></li>
-                
-                <!-- NUOVE VOCI PAGAMENTI -->
-                <li><a href="{% url 'payments:purchase_history' %}">💰 I Miei Acquisti</a></li>
+
+                <!-- SEZIONE VENDITE -->
+                <li class="dropdown-header">🏪 VENDITE</li>
+                <li><a href="{% url 'payments:seller_requests' %}">📋 Richieste Ricevute</a></li>
                 <li><a href="{% url 'payments:sales_history' %}">💸 Le Mie Vendite</a></li>
                 <li><a href="{% url 'payments:seller_setup' %}">⚙️ Impostazioni Vendite</a></li>
 
                 <li class="divider"></li>
+
+                <!-- SEZIONE ACQUISTI -->
+                <li class="dropdown-header">🛒 ACQUISTI</li>
+                <li><a href="{% url 'payments:purchase_history' %}">💰 I Miei Acquisti</a></li>
+
+                <li class="divider"></li>
+
+                <!-- SEZIONE SCAMBI -->
+                <li class="dropdown-header">🔄 SCAMBI</li>
+                <li><a href="{% url 'trade:inbox' %}">📥 Scambi (ricevuti)</a></li>
+                <li><a href="{% url 'trade:sent' %}">📤 Scambi (inviati)</a></li>
+
+                <li class="divider"></li>
+                
+                <!-- LOGOUT -->
                 <li>
                     <form method="post" action="{% url 'logout' %}" style="margin:0; padding:0;">
                         {% csrf_token %}
@@ -1479,6 +1495,8 @@ stripe==7.0.0
 ### payments/urls.py
 
 ```python
+# payments/urls.py - VERSIONE CORRETTA COMPLETA
+
 from django.urls import path
 from . import views
 
@@ -1495,15 +1513,24 @@ urlpatterns = [
     path('success/<uuid:uuid>/', views.PaymentSuccessView.as_view(), name='payment_success'),
     path('cancelled/<uuid:uuid>/', views.PaymentCancelledView.as_view(), name='payment_cancelled'),
     
+    # 🔥 AGGIUNGI QUESTI URL MANCANTI:
+    path('transaction/<uuid:uuid>/', views.PaymentTransactionDetailView.as_view(), name='transaction_detail'),
+    
     # Cronologie
     path('purchases/', views.PurchaseHistoryView.as_view(), name='purchase_history'),
     path('sales/', views.SalesHistoryView.as_view(), name='sales_history'),
     
-    # Webhook Stripe
-    path('stripe/webhook/', views.stripe_webhook, name='stripe_webhook'),
+    # 🔥 AGGIUNGI QUESTO URL PER I VENDITORI:
+    path('seller/requests/', views.SellerRequestsView.as_view(), name='seller_requests'),
     
     # Configurazione venditore
     path('seller/setup/', views.SellerSetupView.as_view(), name='seller_setup'),
+    
+    # Webhook Stripe
+    path('stripe/webhook/', views.stripe_webhook, name='stripe_webhook'),
+
+    # In payments/urls.py, aggiungi:
+    path('transaction/<uuid:uuid>/', views.PaymentTransactionDetailView.as_view(), name='transaction_detail'),
 ]
 ```
 
@@ -2641,6 +2668,26 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 logger = logging.getLogger(__name__)
 
 
+class SellerRequestsView(LoginRequiredMixin, ListView):
+    """Lista delle richieste di acquisto ricevute dal venditore"""
+    model = PurchaseRequest
+    template_name = 'payments/seller_requests.html'
+    context_object_name = 'requests'
+    paginate_by = 20
+    
+    def get_queryset(self):
+        return PurchaseRequest.objects.filter(
+            seller=self.request.user
+        ).select_related('buyer', 'item').order_by('-created_at')
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['pending_count'] = self.get_queryset().filter(
+            status=PurchaseRequest.STATUS_PENDING
+        ).count()
+        return context
+
+
 class RequestPurchaseView(LoginRequiredMixin, View):
     """Richiesta di acquisto per un annuncio"""
     template_name = 'payments/request_purchase.html'
@@ -2702,7 +2749,7 @@ class RequestPurchaseView(LoginRequiredMixin, View):
             
             messages.success(
                 request,
-                f"✅ Richiesta di acquisto inviata a {item.user.username}!"
+                f"Richiesta di acquisto inviata a {item.user.username}!"
             )
             return redirect('payments:request_detail', uuid=purchase_request.uuid)
         
@@ -2738,8 +2785,14 @@ class PurchaseRequestDetailView(LoginRequiredMixin, DetailView):
         request = self.get_object()
         user = self.request.user
         
-        # Calcola commissioni
-        context['fees'] = PaymentTransaction.calculate_fees(float(request.item.price))
+        # Calcola commissioni in euro (non centesimi)
+        fees = PaymentTransaction.calculate_fees(float(request.item.price))
+        context['fees'] = {
+            'item_price_euros': fees['item_price_cents'] / 100,
+            'platform_fee_euros': fees['platform_fee_cents'] / 100,
+            'stripe_fee_euros': fees['stripe_fee_cents'] / 100,
+            'total_amount_euros': fees['total_amount_cents'] / 100,
+        }
         
         # Permessi
         context['is_seller'] = user == request.seller
@@ -2768,7 +2821,7 @@ class ProcessPurchaseRequestView(View):
             if purchase_request.status == PurchaseRequest.STATUS_PENDING:
                 purchase_request.status = PurchaseRequest.STATUS_APPROVED
                 purchase_request.save()
-                messages.success(request, "✅ Richiesta approvata! Ora l'acquirente può procedere al pagamento.")
+                messages.success(request, "Richiesta approvata! Ora l'acquirente può procedere al pagamento.")
             else:
                 messages.error(request, "Questa richiesta non può essere approvata.")
                 
@@ -2776,7 +2829,7 @@ class ProcessPurchaseRequestView(View):
             if purchase_request.status == PurchaseRequest.STATUS_PENDING:
                 purchase_request.status = PurchaseRequest.STATUS_REJECTED
                 purchase_request.save()
-                messages.info(request, "❌ Richiesta rifiutata.")
+                messages.info(request, "Richiesta rifiutata.")
             else:
                 messages.error(request, "Questa richiesta non può essere rifiutata.")
         
@@ -2865,10 +2918,10 @@ class CreateCheckoutSessionView(LoginRequiredMixin, View):
             return redirect('payments:request_detail', uuid=uuid)
 
 
-class PaymentSuccessView(LoginRequiredMixin, DetailView):
-    """Pagina di successo dopo il pagamento"""
+class PaymentTransactionDetailView(LoginRequiredMixin, DetailView):
+    """Dettaglio di una transazione di pagamento"""
     model = PaymentTransaction
-    template_name = 'payments/payment_success.html'
+    template_name = 'payments/transaction_detail.html'
     context_object_name = 'transaction'
     slug_field = 'uuid'
     slug_url_kwarg = 'uuid'
@@ -2879,41 +2932,15 @@ class PaymentSuccessView(LoginRequiredMixin, DetailView):
         if self.request.user not in [obj.buyer, obj.seller]:
             raise PermissionDenied("Non autorizzato")
         return obj
-
-
-class PaymentCancelledView(LoginRequiredMixin, DetailView):
-    """Pagina quando il pagamento viene annullato"""
-    model = PaymentTransaction
-    template_name = 'payments/payment_cancelled.html'
-    context_object_name = 'transaction'
-    slug_field = 'uuid'
-    slug_url_kwarg = 'uuid'
     
-    def get_object(self):
-        obj = super().get_object()
-        if self.request.user not in [obj.buyer, obj.seller]:
-            raise PermissionDenied("Non autorizzato")
-        return obj
-
-
-class PurchaseHistoryView(LoginRequiredMixin, ListView):
-    """Cronologia acquisti dell'utente"""
-    model = PaymentTransaction
-    template_name = 'payments/purchase_history.html'
-    context_object_name = 'transactions'
-    paginate_by = 20
-    
-    def get_queryset(self):
-        return PaymentTransaction.objects.filter(
-            buyer=self.request.user
-        ).select_related('seller', 'item').order_by('-created_at')
-
-
-class SalesHistoryView(LoginRequiredMixin, ListView):
-    """Cronologia vendite dell'utente"""
-    model = PaymentTransaction
-    template_name = 'payments/sales_history.html'
-    context_object_name = 'transactions'
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        transaction = self.get_object()
+        
+        # Aggiungi info sulla richiesta collegata
+        try:
+            context['purchase_request'] = transaction.purchase_request
+        except:
 
 <<TRUNCATED: showing first 300 lines>>
 ```

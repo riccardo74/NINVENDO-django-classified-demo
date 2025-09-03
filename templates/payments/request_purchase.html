@@ -1,78 +1,86 @@
 {% extends "django_classified/_base.html" %}
 {% load i18n widget_tweaks %}
 
-{% block title %}Acquista: {{ item.title }}{% endblock %}
+{% block title %}Richiesta di Acquisto{% endblock %}
 
 {% block body %}
 <div class="container" style="max-width: 800px;">
-    <h3>💰 Acquista Articolo</h3>
+    <h3>🛒 Richiesta di Acquisto</h3>
     
     <!-- Dettagli Articolo -->
-    <div class="card mb-4">
-        <div class="card-header bg-primary text-white">
-            <h5>🎮 Articolo Selezionato</h5>
-        </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col-md-3">
-                    {% if item.image_set.first %}
-                        <img src="{{ item.image_set.first.file.url }}" alt="{{ item.title }}" 
-                             class="img-fluid rounded">
-                    {% else %}
-                        <div class="bg-light p-4 text-center rounded text-muted">
-                            <i class="fas fa-image fa-2x"></i><br>
-                            Nessuna<br>Immagine
-                        </div>
-                    {% endif %}
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5>📦 Articolo Selezionato</h5>
                 </div>
-                <div class="col-md-9">
-                    <h5>{{ item.title }}</h5>
-                    <p><strong>👤 Venditore:</strong> {{ item.user.username }}</p>
-                    <p><strong>💶 Prezzo:</strong> {{ item.price }}€</p>
-                    {% if item.description %}
-                        <p class="text-muted">{{ item.description|truncatewords:30 }}</p>
-                    {% endif %}
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4">
+                            {% if item.image_set.first %}
+                                <img src="{{ item.image_set.first.file.url }}" 
+                                     alt="{{ item.title }}" 
+                                     class="img-fluid rounded">
+                            {% else %}
+                                <div class="bg-light p-4 text-center rounded">
+                                    <span class="text-muted">📷 Nessuna Immagine</span>
+                                </div>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-8">
+                            <h4>{{ item.title }}</h4>
+                            <p><strong>Venditore:</strong> {{ item.user.username }}</p>
+                            <p><strong>Prezzo:</strong> <span class="text-success">€{{ item.price|floatformat:0 }}</span></p>
+                            {% if item.description %}
+                                <p><strong>Descrizione:</strong></p>
+                                <p class="text-muted">{{ item.description|truncatewords:30 }}</p>
+                            {% endif %}
+                            <a href="{{ item.get_absolute_url }}" class="btn btn-outline-info btn-sm" target="_blank">
+                                👁️ Vedi Annuncio Completo
+                            </a>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- Riepilogo Costi -->
-    <div class="card mb-4">
-        <div class="card-header bg-info text-white">
-            <h5>💳 Riepilogo Costi</h5>
-        </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col-md-8">
-                    <table class="table table-sm">
-                        <tbody>
-                            <tr>
-                                <td><strong>Prezzo articolo</strong></td>
-                                <td class="text-right">€{{ fees.item_price_cents|floatformat:0|add:"0"|slice:":-2" }}.{{ fees.item_price_cents|floatformat:0|add:"0"|slice:"-2:" }}</td>
-                            </tr>
-                            <tr class="text-muted">
-                                <td>Commissione piattaforma (3%)</td>
-                                <td class="text-right">€{{ fees.platform_fee_cents|floatformat:0|add:"00"|slice:":-2" }}.{{ fees.platform_fee_cents|floatformat:0|add:"00"|slice:"-2:" }}</td>
-                            </tr>
-                            <tr class="text-muted">
-                                <td>Commissione Stripe (1.4% + €0.25)</td>
-                                <td class="text-right">€{{ fees.stripe_fee_cents|floatformat:0|add:"00"|slice:":-2" }}.{{ fees.stripe_fee_cents|floatformat:0|add:"00"|slice:"-2:" }}</td>
-                            </tr>
-                            <tr class="table-primary">
-                                <td><strong>Totale da pagare</strong></td>
-                                <td class="text-right"><strong>€{{ total_euros|floatformat:2 }}</strong></td>
-                            </tr>
-                        </tbody>
-                    </table>
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5>💰 Riepilogo Costi</h5>
                 </div>
-                <div class="col-md-4">
-                    <div class="alert alert-info">
-                        <h6>🔒 Pagamento Sicuro</h6>
-                        <p class="small mb-0">
-                            Il pagamento viene processato da <strong>Stripe</strong>, 
-                            uno dei sistemi di pagamento più sicuri al mondo.
-                        </p>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>Prezzo articolo:</span>
+                                <span>€{{ fees.item_price_cents|floatformat:2 }}</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>Commissione piattaforma (3%):</span>
+                                <span>€{{ fees.platform_fee_cents|floatformat:2 }}</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>Commissione Stripe:</span>
+                                <span>€{{ fees.stripe_fee_cents|floatformat:2 }}</span>
+                            </div>
+                            <hr>
+                            <div class="d-flex justify-content-between">
+                                <strong>Totale che pagherai:</strong>
+                                <strong class="text-primary">€{{ total_euros|floatformat:2 }}</strong>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="alert alert-info">
+                                <small>
+                                    <strong>ℹ️ Commissioni:</strong><br>
+                                    Le commissioni servono per mantenere la piattaforma sicura e garantire transazioni protette.
+                                </small>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -80,126 +88,139 @@
     </div>
 
     <!-- Form Richiesta -->
-    <form method="post">
-        {% csrf_token %}
-        
-        <div class="card mb-4">
-            <div class="card-header">
-                <h5>📝 Dettagli della Richiesta</h5>
-            </div>
-            <div class="card-body">
-                <!-- Messaggio -->
-                <div class="form-group">
-                    <label for="{{ form.message.id_for_label }}">💬 Messaggio per {{ item.user.username }}:</label>
-                    {{ form.message|add_class:"form-control" }}
-                    {% if form.message.errors %}
-                        <div class="text-danger">{{ form.message.errors }}</div>
-                    {% endif %}
-                    <small class="form-text text-muted">
-                        Presentati e fai eventuali domande sull'articolo
-                    </small>
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>📝 Dettagli della Richiesta</h5>
                 </div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        
+                        <!-- Messaggio al venditore -->
+                        <div class="form-group">
+                            <label for="{{ form.message.id_for_label }}">💬 Messaggio al Venditore (opzionale):</label>
+                            {{ form.message|add_class:"form-control" }}
+                            {% if form.message.errors %}
+                                <div class="text-danger">{{ form.message.errors }}</div>
+                            {% endif %}
+                            <small class="form-text text-muted">
+                                Presentati e specifica eventuali domande sull'articolo
+                            </small>
+                        </div>
 
-                <hr>
+                        <!-- Metodo di consegna -->
+                        <div class="form-group">
+                            <label for="{{ form.delivery_method.id_for_label }}">🚚 Metodo di Consegna Preferito:</label>
+                            {{ form.delivery_method|add_class:"form-control" }}
+                            {% if form.delivery_method.errors %}
+                                <div class="text-danger">{{ form.delivery_method.errors }}</div>
+                            {% endif %}
+                            <small class="form-text text-muted">Come preferisci ricevere l'articolo?</small>
+                        </div>
 
-                <!-- Metodo di Consegna -->
-                <h6>🚚 Modalità di Consegna</h6>
-                <div class="form-group">
-                    <label for="{{ form.delivery_method.id_for_label }}">Come preferisci ricevere l'articolo?</label>
-                    {{ form.delivery_method|add_class:"form-control" }}
-                    {% if form.delivery_method.errors %}
-                        <div class="text-danger">{{ form.delivery_method.errors }}</div>
-                    {% endif %}
-                </div>
+                        <!-- Indirizzo di spedizione -->
+                        <div class="form-group" id="shipping-address-group">
+                            <label for="{{ form.shipping_address.id_for_label }}">📍 Indirizzo di Spedizione:</label>
+                            {{ form.shipping_address|add_class:"form-control" }}
+                            {% if form.shipping_address.errors %}
+                                <div class="text-danger">{{ form.shipping_address.errors }}</div>
+                            {% endif %}
+                            <small class="form-text text-muted">
+                                Necessario solo se scegli "Spedizione" o "Entrambi"
+                            </small>
+                        </div>
 
-                <!-- Indirizzo Spedizione (condizionale) -->
-                <div class="form-group" id="shipping-address-group">
-                    <label for="{{ form.shipping_address.id_for_label }}">📍 Indirizzo di Spedizione:</label>
-                    {{ form.shipping_address|add_class:"form-control" }}
-                    {% if form.shipping_address.errors %}
-                        <div class="text-danger">{{ form.shipping_address.errors }}</div>
-                    {% endif %}
-                    <small class="form-text text-muted">
-                        Necessario solo se scegli "Spedizione" o "Entrambi"
-                    </small>
-                </div>
-            </div>
-        </div>
+                        <!-- Processo di acquisto -->
+                        <div class="alert alert-info">
+                            <h6>ℹ️ Come Funziona il Processo</h6>
+                            <ol>
+                                <li><strong>Invii la richiesta</strong> al venditore con i tuoi dettagli</li>
+                                <li><strong>Il venditore esamina</strong> la tua richiesta (può approvare o rifiutare)</li>
+                                <li><strong>Se approvata:</strong> ricevi notifica e puoi procedere al pagamento</li>
+                                <li><strong>Dopo il pagamento:</strong> coordinate consegna/ritiro con il venditore</li>
+                            </ol>
+                        </div>
 
-        <!-- Informazioni Processo -->
-        <div class="card mb-4">
-            <div class="card-header bg-success text-white">
-                <h5>ℹ️ Come Funziona</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6">
-                        <h6>👤 Processo di Acquisto:</h6>
-                        <ol>
-                            <li><strong>Invia Richiesta</strong> - Il venditore riceverà la tua richiesta</li>
-                            <li><strong>Approvazione</strong> - Il venditore approva o rifiuta</li>
-                            <li><strong>Pagamento</strong> - Se approvata, procedi al pagamento sicuro</li>
-                            <li><strong>Consegna</strong> - Ricevi l'articolo secondo l'accordo</li>
-                        </ol>
-                    </div>
-                    <div class="col-md-6">
-                        <h6>🛡️ Protezioni:</h6>
-                        <ul>
-                            <li>✅ Pagamenti sicuri con Stripe</li>
-                            <li>✅ Protezione acquirenti</li>
-                            <li>✅ Sistema di feedback e rating</li>
-                            <li>✅ Supporto clienti NINVENDO</li>
-                        </ul>
-                    </div>
+                        <!-- Bottoni -->
+                        <div class="text-center">
+                            <button type="submit" class="btn btn-success btn-lg">
+                                📤 Invia Richiesta di Acquisto
+                            </button>
+                            <a href="{{ item.get_absolute_url }}" class="btn btn-secondary btn-lg">
+                                ❌ Annulla
+                            </a>
+                        </div>
+                    </form>
                 </div>
             </div>
         </div>
-
-        <!-- Pulsanti -->
-        <div class="text-center mb-4">
-            <button type="submit" class="btn btn-success btn-lg">
-                📤 Invia Richiesta di Acquisto
-            </button>
-            <a href="{{ item.get_absolute_url }}" class="btn btn-secondary btn-lg ml-3">
-                ⬅️ Torna all'Annuncio
-            </a>
-        </div>
-    </form>
-
-    <!-- Disclaimer -->
-    <div class="alert alert-light border">
-        <small class="text-muted">
-            <strong>Nota:</strong> Inviando questa richiesta non sei ancora vincolato all'acquisto. 
-            Il pagamento avverrà solo dopo l'approvazione del venditore e la tua conferma finale.
-        </small>
     </div>
+
+    <!-- Info Venditore -->
+    {% if seller_profile %}
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card border-success">
+                <div class="card-header bg-success text-white">
+                    <h6>👤 Informazioni Venditore</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p><strong>Username:</strong> {{ item.user.username }}</p>
+                            <p><strong>Accetta pagamenti:</strong> 
+                                {% if seller_profile.accepts_payments %}
+                                    <span class="badge badge-success">✅ Sì</span>
+                                {% else %}
+                                    <span class="badge badge-danger">❌ No</span>
+                                {% endif %}
+                            </p>
+                        </div>
+                        <div class="col-md-6">
+                            {% if seller_profile.total_sales > 0 %}
+                            <p><strong>Vendite completate:</strong> {{ seller_profile.total_sales }}</p>
+                            <p><strong>Rating:</strong> 
+                                {% if seller_profile.average_rating > 0 %}
+                                    {{ seller_profile.average_rating|floatformat:1 }}/5 ⭐
+                                {% else %}
+                                    <span class="text-muted">Nessuna valutazione</span>
+                                {% endif %}
+                            </p>
+                            {% else %}
+                            <p class="text-muted">Nuovo venditore sulla piattaforma</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
-<!-- Script per gestire condizionalità dell'indirizzo -->
 <script>
+// Mostra/nascondi indirizzo basato sul metodo di consegna
 document.addEventListener('DOMContentLoaded', function() {
-    const deliveryMethod = document.querySelector('#{{ form.delivery_method.id_for_label }}');
+    const deliveryMethod = document.getElementById('id_delivery_method');
     const shippingGroup = document.getElementById('shipping-address-group');
-    const shippingField = document.querySelector('#{{ form.shipping_address.id_for_label }}');
     
     function toggleShippingAddress() {
-        const selectedValue = deliveryMethod.value;
-        const needsAddress = selectedValue === 'shipping' || selectedValue === 'both';
-        
-        if (needsAddress) {
+        const value = deliveryMethod.value;
+        if (value === 'shipping' || value === 'both') {
             shippingGroup.style.display = 'block';
-            shippingField.required = true;
+            document.getElementById('id_shipping_address').setAttribute('required', 'required');
         } else {
             shippingGroup.style.display = 'none';
-            shippingField.required = false;
-            shippingField.value = '';
+            document.getElementById('id_shipping_address').removeAttribute('required');
         }
     }
     
-    // Inizializza
+    // Chiamata iniziale
     toggleShippingAddress();
     
-    // Event listener
+    // Ascolta cambiamenti
     deliveryMethod.addEventListener('change', toggleShippingAddress);
 });
 </script>

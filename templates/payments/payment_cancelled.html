@@ -1,0 +1,137 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Pagamento Annullato{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 600px;">
+    <!-- Header Annullamento -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="alert alert-warning text-center">
+                <h2 class="mb-3">⚠️ Pagamento Annullato</h2>
+                <p class="lead mb-0">Il processo di pagamento è stato interrotto.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dettagli Transazione Annullata -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h5>📄 Dettagli dell'Operazione</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-12">
+                            <h6><strong>Articolo:</strong></h6>
+                            <p>{{ transaction.item.title }}</p>
+                            
+                            <h6><strong>Venditore:</strong></h6>
+                            <p>{{ transaction.seller.username }}</p>
+                            
+                            <h6><strong>Importo che avresti pagato:</strong></h6>
+                            <p class="text-muted">€{{ transaction.total_amount_euros|floatformat:2 }}</p>
+                            
+                            <h6><strong>Stato Transazione:</strong></h6>
+                            <span class="badge badge-warning">⏸️ Annullato</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cosa è successo -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card border-info">
+                <div class="card-header bg-info text-white">
+                    <h6>ℹ️ Cosa è successo?</h6>
+                </div>
+                <div class="card-body">
+                    <p>Il pagamento è stato annullato. I motivi possibili sono:</p>
+                    <ul>
+                        <li>Hai chiuso la finestra di pagamento</li>
+                        <li>Hai cliccato "Indietro" o "Annulla" su Stripe</li>
+                        <li>Si è verificato un timeout della sessione</li>
+                        <li>Hai deciso di non procedere con l'acquisto</li>
+                    </ul>
+                    
+                    <div class="alert alert-info">
+                        <strong>✅ Nessun addebito:</strong> La tua carta non è stata addebitata.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cosa fare adesso -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card border-primary">
+                <div class="card-header bg-primary text-white">
+                    <h6>🤔 Cosa vuoi fare adesso?</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-12 text-center">
+                            <p>Puoi:</p>
+                            
+                            <div class="btn-group-vertical btn-group-lg">
+                                <!-- Se la richiesta è ancora approvata, mostra pulsante per riprovare -->
+                                {% if transaction.purchase_request.status == 'approved' %}
+                                <form method="post" action="{% url 'payments:create_checkout' transaction.purchase_request.uuid %}" class="mb-2">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-success btn-lg">
+                                        💳 Riprova il Pagamento
+                                    </button>
+                                </form>
+                                {% endif %}
+                                
+                                <a href="{{ transaction.item.get_absolute_url }}" class="btn btn-secondary btn-lg mb-2">
+                                    👁️ Rivedi l'Annuncio
+                                </a>
+                                
+                                <a href="{% url 'payments:purchase_history' %}" class="btn btn-info btn-lg mb-2">
+                                    📋 I Miei Acquisti
+                                </a>
+                                
+                                <a href="{% url 'django_classified:index' %}" class="btn btn-primary btn-lg">
+                                    🏠 Torna alla Home
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Aiuto -->
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card border-secondary">
+                <div class="card-body text-center">
+                    <h6>🆘 Problemi tecnici?</h6>
+                    <p class="text-muted">
+                        Se hai riscontrato errori durante il pagamento,
+                        <a href="mailto:support@ninvendo.com">contatta il nostro supporto</a>
+                    </p>
+                    <p><small>ID Operazione: {{ transaction.uuid|slice:":8" }}</small></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Rimuovi eventuali parametri di pagamento dall'URL dopo 3 secondi
+setTimeout(function() {
+    if (window.location.search) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+}, 3000);
+</script>
+{% endblock %}

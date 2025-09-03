@@ -1,270 +1,378 @@
 {% extends "django_classified/_base.html" %}
 {% load i18n %}
 
-{% block title %}Richiesta di Acquisto #{{ purchase_request.uuid.hex|slice:":8" }}{% endblock %}
+{% block title %}Richiesta #{{ purchase_request.uuid.hex|slice:":8" }}{% endblock %}
 
 {% block body %}
-<div class="container" style="max-width: 900px;">
-    <h3>📄 Richiesta di Acquisto #{{ purchase_request.uuid.hex|slice:":8" }}</h3>
-    
-    <!-- Status della richiesta -->
-    <div class="row mb-4">
+<div class="container">
+    <div class="row">
         <div class="col-md-12">
-            <div class="alert 
-                {% if purchase_request.status == 'pending' %}alert-warning
-                {% elif purchase_request.status == 'approved' %}alert-success  
-                {% elif purchase_request.status == 'rejected' %}alert-danger
-                {% elif purchase_request.status == 'completed' %}alert-info
-                {% else %}alert-secondary{% endif %}">
-                
-                <div class="row">
-                    <div class="col-md-8">
-                        <h4 class="mb-1">
-                            {% if purchase_request.status == 'pending' %}⏳ In Attesa di Approvazione
-                            {% elif purchase_request.status == 'approved' %}✅ Richiesta Approvata
-                            {% elif purchase_request.status == 'rejected' %}❌ Richiesta Rifiutata
-                            {% elif purchase_request.status == 'completed' %}🎉 Acquisto Completato
-                            {% elif purchase_request.status == 'expired' %}⏰ Richiesta Scaduta
-                            {% endif %}
-                        </h4>
-                        <p class="mb-0">
-                            <strong>Data:</strong> {{ purchase_request.created_at|date:"d/m/Y H:i" }}
-                            {% if purchase_request.expires_at and purchase_request.status == 'pending' %}
-                                <br><strong>Scade:</strong> {{ purchase_request.expires_at|date:"d/m/Y H:i" }}
-                            {% endif %}
-                        </p>
-                    </div>
-                    <div class="col-md-4 text-right">
-                        {% if purchase_request.status == 'approved' and is_buyer %}
-                            <form method="post" action="{% url 'payments:create_checkout' purchase_request.uuid %}">
-                                {% csrf_token %}
-                                <button type="submit" class="btn btn-success btn-lg">
-                                    💳 Procedi al Pagamento
-                                </button>
-                            </form>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Dettagli Articolo e Transazione -->
-    <div class="row mb-4">
-        <!-- Articolo -->
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header bg-primary text-white">
-                    <h5>🎮 Articolo</h5>
-                </div>
-                <div class="card-body">
-                    {% if purchase_request.item.image_set.first %}
-                        <img src="{{ purchase_request.item.image_set.first.file.url }}" 
-                             alt="{{ purchase_request.item.title }}" 
-                             class="img-fluid rounded mb-3" style="max-height: 200px;">
-                    {% endif %}
-                    <h6>{{ purchase_request.item.title }}</h6>
-                    <p><strong>💶 Prezzo:</strong> €{{ purchase_request.item.price|floatformat:2 }}</p>
-                    {% if purchase_request.item.description %}
-                        <p class="text-muted small">{{ purchase_request.item.description|truncatewords:20 }}</p>
-                    {% endif %}
-                    <a href="{{ purchase_request.item.get_absolute_url }}" class="btn btn-outline-primary btn-sm">
-                        👁️ Vedi Annuncio
-                    </a>
-                </div>
-            </div>
-        </div>
-
-        <!-- Dettagli Costo -->
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header bg-info text-white">
-                    <h5>💳 Riepilogo Costi</h5>
-                </div>
-                <div class="card-body">
-                    <table class="table table-sm">
-                        <tbody>
-                            <tr>
-                                <td>Prezzo articolo</td>
-                                <td class="text-right">€{{ fees.item_price_euros|floatformat:2 }}</td>
-                            </tr>
-                            <tr class="text-muted">
-                                <td>Commissione piattaforma (3%)</td>
-                                <td class="text-right">€{{ fees.platform_fee_euros|floatformat:2 }}</td>
-                            </tr>
-                            <tr class="text-muted">
-                                <td>Commissione Stripe</td>
-                                <td class="text-right">€{{ fees.stripe_fee_euros|floatformat:2 }}</td>
-                            </tr>
-                            <tr class="table-primary">
-                                <td><strong>Totale da pagare</strong></td>
-                                <td class="text-right"><strong>€{{ fees.total_amount_euros|floatformat:2 }}</strong></td>
-                            </tr>
-                        </tbody>
-                    </table>
-
-                    {% if purchase_request.status == 'approved' and is_buyer %}
-                        <div class="alert alert-success">
-                            <small>
-                                ✅ <strong>Richiesta approvata!</strong><br>
-                                Puoi ora procedere al pagamento sicuro con Stripe.
-                            </small>
+            <!-- Header con stato -->
+            <div class="card mb-4">
+                <div class="card-header 
+                    {% if purchase_request.status == 'pending' %}bg-warning
+                    {% elif purchase_request.status == 'approved' %}bg-success text-white
+                    {% elif purchase_request.status == 'rejected' %}bg-danger text-white
+                    {% elif purchase_request.status == 'completed' %}bg-info text-white
+                    {% elif purchase_request.status == 'expired' %}bg-secondary text-white
+                    {% endif %}">
+                    
+                    <div class="row">
+                        <div class="col-md-8">
+                            <h4>
+                                {% if purchase_request.status == 'pending' %}⏳ In Attesa di Approvazione
+                                {% elif purchase_request.status == 'approved' %}✅ Richiesta Approvata
+                                {% elif purchase_request.status == 'rejected' %}❌ Richiesta Rifiutata
+                                {% elif purchase_request.status == 'completed' %}🎉 Acquisto Completato
+                                {% elif purchase_request.status == 'expired' %}⌛ Richiesta Scaduta
+                                {% endif %}
+                            </h4>
+                            <p class="mb-0">Richiesta #{{ purchase_request.uuid.hex|slice:":8" }}</p>
                         </div>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Partecipanti -->
-    <div class="row mb-4">
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <h6>🛒 Acquirente</h6>
-                </div>
-                <div class="card-body">
-                    <p><strong>{{ purchase_request.buyer.username }}</strong></p>
-                    <p class="small text-muted">{{ purchase_request.buyer.email }}</p>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <h6>🏪 Venditore</h6>
-                </div>
-                <div class="card-body">
-                    <p><strong>{{ purchase_request.seller.username }}</strong></p>
-                    {% if purchase_request.seller.seller_profile %}
-                        <p class="small text-muted">
-                            {{ purchase_request.seller.seller_profile.total_sales }} vendite • 
-                            ⭐ {{ purchase_request.seller.seller_profile.average_rating|floatformat:1 }}/5
-                        </p>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Messaggio e Dettagli Consegna -->
-    {% if purchase_request.message or purchase_request.shipping_address %}
-        <div class="row mb-4">
-            <div class="col-md-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h6>📝 Dettagli Richiesta</h6>
+                        <div class="col-md-4 text-right">
+                            <p class="mb-1"><strong>Data:</strong> {{ purchase_request.created_at|date:"d/m/Y H:i" }}</p>
+                            {% if purchase_request.expires_at %}
+                                <p class="mb-0"><strong>Scade:</strong> {{ purchase_request.expires_at|date:"d/m/Y H:i" }}</p>
+                            {% endif %}
+                        </div>
                     </div>
-                    <div class="card-body">
-                        {% if purchase_request.message %}
-                            <div class="mb-3">
-                                <h6>💬 Messaggio dell'acquirente:</h6>
-                                <div class="alert alert-light">
-                                    {{ purchase_request.message|linebreaks }}
-                                </div>
-                            </div>
-                        {% endif %}
-
-                        <div class="row">
-                            <div class="col-md-6">
-                                <h6>🚚 Modalità di Consegna:</h6>
-                                <p>
-                                    {% if purchase_request.delivery_method == 'pickup' %}
-                                        📍 Ritiro di persona
-                                    {% elif purchase_request.delivery_method == 'shipping' %}
-                                        📦 Spedizione
+                </div>
+            </div>
+            
+            <div class="row">
+                <!-- Dettagli richiesta -->
+                <div class="col-md-8">
+                    <!-- Informazioni articolo -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h5>🎮 Articolo Richiesto</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    {% if purchase_request.item.image_set.first %}
+                                        <img src="{{ purchase_request.item.image_set.first.file.url }}" 
+                                             alt="{{ purchase_request.item.title }}" 
+                                             class="img-fluid rounded">
                                     {% else %}
-                                        🔄 Entrambi disponibili
+                                        <div class="bg-light p-3 text-center rounded">
+                                            <span class="text-muted">Nessuna immagine</span>
+                                        </div>
                                     {% endif %}
-                                </p>
-                            </div>
-                            {% if purchase_request.shipping_address %}
-                                <div class="col-md-6">
-                                    <h6>📍 Indirizzo di Spedizione:</h6>
-                                    <div class="alert alert-light">
-                                        {{ purchase_request.shipping_address|linebreaks }}
-                                    </div>
                                 </div>
+                                <div class="col-md-9">
+                                    <h6>{{ purchase_request.item.title }}</h6>
+                                    <p class="text-muted">{{ purchase_request.item.description|truncatewords:20 }}</p>
+                                    <p><strong>Prezzo:</strong> €{{ purchase_request.item.price }}</p>
+                                    <p>
+                                        <a href="{{ purchase_request.item.get_absolute_url }}" 
+                                           class="btn btn-outline-primary btn-sm">
+                                            👁️ Vedi Annuncio Completo
+                                        </a>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Informazioni partecipanti -->
+                    <div class="row">
+                        <!-- Acquirente -->
+                        <div class="col-md-6">
+                            <div class="card mb-3 {% if is_buyer %}border-primary{% endif %}">
+                                <div class="card-header {% if is_buyer %}bg-primary text-white{% endif %}">
+                                    <h6>🛒 Acquirente</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>{{ purchase_request.buyer.username }}</strong>
+                                        {% if is_buyer %}<span class="badge badge-primary ml-2">Tu</span>{% endif %}
+                                    </p>
+                                    <p>📧 {{ purchase_request.buyer.email }}</p>
+                                    <p>🚚 {{ purchase_request.get_delivery_method_display }}</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Venditore -->
+                        <div class="col-md-6">
+                            <div class="card mb-3 {% if is_seller %}border-success{% endif %}">
+                                <div class="card-header {% if is_seller %}bg-success text-white{% endif %}">
+                                    <h6>🏪 Venditore</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>{{ purchase_request.seller.username }}</strong>
+                                        {% if is_seller %}<span class="badge badge-success ml-2">Tu</span>{% endif %}
+                                    </p>
+                                    {% if purchase_request.seller.seller_profile %}
+                                        <p>📊 {{ purchase_request.seller.seller_profile.total_sales }} vendite</p>
+                                        <p>⭐ {{ purchase_request.seller.seller_profile.average_rating|floatformat:1 }}/5</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Indirizzo di spedizione -->
+                    {% if purchase_request.shipping_address %}
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>📍 Indirizzo di Spedizione</h6>
+                        </div>
+                        <div class="card-body">
+                            <address>{{ purchase_request.shipping_address|linebreaks }}</address>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Messaggio dell'acquirente -->
+                    {% if purchase_request.message %}
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>💬 Messaggio dell'Acquirente</h6>
+                        </div>
+                        <div class="card-body">
+                            {{ purchase_request.message|linebreaks }}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <!-- Sidebar - Azioni -->
+                <div class="col-md-4">
+                    <!-- Riepilogo costi -->
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>💳 Riepilogo Costi</h6>
+                        </div>
+                        <div class="card-body">
+                            <table class="table table-sm">
+                                <tbody>
+                                    <tr>
+                                        <td>Prezzo articolo:</td>
+                                        <td class="text-right"><strong>€{{ fees.item_price_euros|floatformat:2 }}</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Commissione piattaforma (3%):</td>
+                                        <td class="text-right">€{{ fees.platform_fee_euros|floatformat:2 }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Commissione Stripe:</td>
+                                        <td class="text-right">€{{ fees.stripe_fee_euros|floatformat:2 }}</td>
+                                    </tr>
+                                    <tr class="table-success">
+                                        <td><strong>Totale da pagare:</strong></td>
+                                        <td class="text-right"><strong>€{{ fees.total_amount_euros|floatformat:2 }}</strong></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- Azioni disponibili -->
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>⚡ Azioni Disponibili</h6>
+                        </div>
+                        <div class="card-body">
+                            
+                            <!-- SE LA RICHIESTA È PENDENTE -->
+                            {% if purchase_request.status == 'pending' %}
+                                {% if is_seller and can_approve %}
+                                    <div class="alert alert-warning p-2 mb-3">
+                                        <small><strong>⏳ Richiesta in attesa della tua approvazione</strong></small>
+                                    </div>
+                                    
+                                    <div class="btn-group-vertical btn-group-block">
+                                        <form method="post" action="{% url 'payments:process_request' purchase_request.uuid 'approve' %}" style="display:inline;">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-success btn-block mb-2"
+                                                    onclick="return confirm('✅ Approvare questa richiesta di acquisto?')">
+                                                ✅ Approva Richiesta
+                                            </button>
+                                        </form>
+                                        
+                                        <form method="post" action="{% url 'payments:process_request' purchase_request.uuid 'reject' %}" style="display:inline;">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-outline-danger btn-block"
+                                                    onclick="return confirm('❌ Rifiutare questa richiesta di acquisto?')">
+                                                ❌ Rifiuta
+                                            </button>
+                                        </form>
+                                    </div>
+                                    
+                                {% elif is_buyer %}
+                                    <div class="alert alert-info p-2 mb-3">
+                                        <small><strong>⏳ In attesa di approvazione dal venditore</strong></small>
+                                    </div>
+                                    <p class="text-muted small">Il venditore {{ purchase_request.seller.username }} riceverà una notifica e potrà approvare o rifiutare la richiesta.</p>
+                                {% endif %}
+                            
+                            <!-- SE LA RICHIESTA È APPROVATA -->
+                            {% elif purchase_request.status == 'approved' %}
+                                {% if is_buyer %}
+                                    <div class="alert alert-success p-2 mb-3">
+                                        <small><strong>✅ Richiesta approvata!</strong></small>
+                                    </div>
+                                    
+                                    <!-- CONTROLLO TRANSAZIONE ESISTENTE -->
+                                    {% if not purchase_request.payment_transaction %}
+                                        <!-- NESSUNA TRANSAZIONE: MOSTRA PULSANTE PAGAMENTO -->
+                                        <form method="post" action="{% url 'payments:create_checkout' purchase_request.uuid %}">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-success btn-lg btn-block mb-3">
+                                                💳 Procedi al Pagamento
+                                                <br><small>€{{ fees.total_amount_euros|floatformat:2 }}</small>
+                                            </button>
+                                        </form>
+                                        
+                                        <div class="alert alert-info p-2">
+                                            <small>
+                                                <strong>🛡️ Pagamento Sicuro</strong><br>
+                                                Sarai reindirizzato a Stripe per completare il pagamento in sicurezza.
+                                            </small>
+                                        </div>
+                                        
+                                    {% elif purchase_request.payment_transaction.status == 'pending' %}
+                                        <!-- TRANSAZIONE CREATA MA NON PAGATA -->
+                                        <div class="alert alert-warning p-2 mb-3">
+                                            <small><strong>⏳ Transazione creata</strong><br>Completa il pagamento per finalizzare l'acquisto.</small>
+                                        </div>
+                                        
+                                        <form method="post" action="{% url 'payments:create_checkout' purchase_request.uuid %}">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-success btn-lg btn-block">
+                                                💳 Completa Pagamento
+                                                <br><small>€{{ fees.total_amount_euros|floatformat:2 }}</small>
+                                            </button>
+                                        </form>
+                                        
+                                    {% elif purchase_request.payment_transaction.status == 'processing' %}
+                                        <!-- PAGAMENTO IN ELABORAZIONE -->
+                                        <div class="alert alert-info p-2 mb-3">
+                                            <small><strong>🔄 Pagamento in elaborazione</strong><br>Il pagamento è stato ricevuto ed è in elaborazione.</small>
+                                        </div>
+                                        
+                                        <a href="{{ purchase_request.payment_transaction.get_absolute_url }}" class="btn btn-outline-info btn-block">
+                                            👁️ Vedi Dettagli Transazione
+                                        </a>
+                                        
+                                    {% elif purchase_request.payment_transaction.status == 'succeeded' %}
+                                        <!-- PAGAMENTO COMPLETATO -->
+                                        <div class="alert alert-success p-2 mb-3">
+                                            <small><strong>🎉 Pagamento completato!</strong><br>L'acquisto è stato finalizzato con successo.</small>
+                                        </div>
+                                        
+                                        <a href="{{ purchase_request.payment_transaction.get_absolute_url }}" class="btn btn-success btn-block">
+                                            📄 Vedi Ricevuta
+                                        </a>
+                                    {% endif %}
+                                    
+                                {% elif is_seller %}
+                                    <div class="alert alert-success p-2 mb-3">
+                                        <small><strong>✅ Hai approvato questa richiesta</strong></small>
+                                    </div>
+                                    <p class="text-muted small">L'acquirente può ora procedere al pagamento.</p>
+                                    
+                                    {% if purchase_request.payment_transaction %}
+                                        <a href="{{ purchase_request.payment_transaction.get_absolute_url }}" class="btn btn-outline-info btn-block">
+                                            👁️ Stato Pagamento
+                                        </a>
+                                    {% endif %}
+                                {% endif %}
+                            
+                            <!-- SE LA RICHIESTA È RIFIUTATA -->
+                            {% elif purchase_request.status == 'rejected' %}
+                                <div class="alert alert-danger p-2 mb-3">
+                                    <small><strong>❌ Richiesta rifiutata</strong></small>
+                                </div>
+                                {% if is_buyer %}
+                                    <p class="text-muted small">Il venditore ha rifiutato la richiesta. Puoi provare con un altro articolo.</p>
+                                    <a href="{% url 'django_classified:index' %}" class="btn btn-primary btn-block">
+                                        🔍 Cerca Altri Articoli
+                                    </a>
+                                {% endif %}
+                            
+                            <!-- SE LA RICHIESTA È COMPLETATA -->
+                            {% elif purchase_request.status == 'completed' %}
+                                <div class="alert alert-success p-2 mb-3">
+                                    <small><strong>🎉 Acquisto completato!</strong></small>
+                                </div>
+                                
+                                {% if purchase_request.payment_transaction %}
+                                    <a href="{{ purchase_request.payment_transaction.get_absolute_url }}" class="btn btn-success btn-block mb-2">
+                                        📄 Vedi Ricevuta
+                                    </a>
+                                {% endif %}
+                                
+                                {% if is_buyer %}
+                                    <a href="{% url 'payments:purchase_history' %}" class="btn btn-outline-primary btn-block">
+                                        📋 I Miei Acquisti
+                                    </a>
+                                {% elif is_seller %}
+                                    <a href="{% url 'payments:sales_history' %}" class="btn btn-outline-success btn-block">
+                                        📋 Le Mie Vendite
+                                    </a>
+                                {% endif %}
+                            
+                            <!-- SE LA RICHIESTA È SCADUTA -->
+                            {% elif purchase_request.status == 'expired' %}
+                                <div class="alert alert-secondary p-2 mb-3">
+                                    <small><strong>⌛ Richiesta scaduta</strong></small>
+                                </div>
+                                {% if is_buyer %}
+                                    <p class="text-muted small">La richiesta è scaduta. Puoi crearne una nuova se l'articolo è ancora disponibile.</p>
+                                {% endif %}
                             {% endif %}
+                            
+                            <!-- Link di navigazione comune -->
+                            <hr>
+                            <div class="btn-group-vertical btn-group-sm">
+                                <a href="{{ purchase_request.item.get_absolute_url }}" class="btn btn-outline-secondary btn-sm">
+                                    ← Torna all'Annuncio
+                                </a>
+                                
+                                {% if is_buyer %}
+                                    <a href="{% url 'payments:purchase_history' %}" class="btn btn-outline-info btn-sm">
+                                        📋 Cronologia Acquisti
+                                    </a>
+                                {% elif is_seller %}
+                                    <a href="{% url 'payments:seller_requests' %}" class="btn btn-outline-info btn-sm">
+                                        📋 Altre Richieste
+                                    </a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Info aggiuntive -->
+                    <div class="card">
+                        <div class="card-body">
+                            <h6 class="small">ℹ️ Informazioni</h6>
+                            <ul class="small text-muted mb-0">
+                                <li>I pagamenti sono elaborati in sicurezza da Stripe</li>
+                                <li>Le commissioni sono detratte automaticamente</li>
+                                <li>Riceverai conferma via email</li>
+                                {% if purchase_request.expires_at %}
+                                    <li>Scadenza automatica: {{ purchase_request.expires_at|date:"d/m/Y H:i" }}</li>
+                                {% endif %}
+                            </ul>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-    {% endif %}
-
-    <!-- Azioni per il Venditore -->
-    {% if is_seller and can_approve %}
-        <div class="row mb-4">
-            <div class="col-md-12">
-                <div class="card">
-                    <div class="card-header bg-warning text-white">
-                        <h5>⚡ Azioni Richieste</h5>
-                    </div>
-                    <div class="card-body text-center">
-                        <p class="mb-3">L'acquirente sta aspettando la tua risposta:</p>
-                        
-                        <form method="post" action="{% url 'payments:process_request' purchase_request.uuid 'approve' %}" 
-                              style="display: inline; margin-right: 15px;">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-success btn-lg"
-                                    onclick="return confirm('✅ Approvare questa richiesta di acquisto? L\'acquirente potrà procedere al pagamento.')">
-                                ✅ Approva Richiesta
-                            </button>
-                        </form>
-
-                        <form method="post" action="{% url 'payments:process_request' purchase_request.uuid 'reject' %}" 
-                              style="display: inline;">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-danger btn-lg"
-                                    onclick="return confirm('❌ Sei sicuro di voler rifiutare questa richiesta?')">
-                                ❌ Rifiuta
-                            </button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-    {% endif %}
-
-    <!-- Link di navigazione -->
-    <div class="text-center mb-4">
-        {% if is_buyer %}
-            <a href="{% url 'payments:purchase_history' %}" class="btn btn-outline-primary">
-                ← I Miei Acquisti
-            </a>
-        {% else %}
-            <a href="{% url 'payments:sales_history' %}" class="btn btn-outline-primary">
-                ← Le Mie Vendite
-            </a>
-        {% endif %}
-        <a href="{% url 'django_classified:index' %}" class="btn btn-secondary ml-2">
-            🏠 Torna alla Home
-        </a>
     </div>
-
-    <!-- Info transazione collegata -->
-    {% if purchase_request.payment_transaction %}
-        <div class="alert alert-info">
-            <h6>💳 Transazione Collegata</h6>
-            <p class="mb-0">
-                ID Transazione: <strong>{{ purchase_request.payment_transaction.uuid.hex|slice:":8" }}</strong> • 
-                Stato: <strong>{{ purchase_request.payment_transaction.get_status_display }}</strong>
-                {% if purchase_request.payment_transaction.completed_at %}
-                    • Completata: {{ purchase_request.payment_transaction.completed_at|date:"d/m/Y H:i" }}
-                {% endif %}
-            </p>
-        </div>
-    {% endif %}
-
-    <!-- Debug Info (rimuovere in produzione) -->
-    {% if debug %}
-    <div class="alert alert-warning">
-        <h6>🐛 Debug Info</h6>
-        <p>Item price: €{{ purchase_request.item.price }}</p>
-        <p>Fees (euros): {{ fees }}</p>
-    </div>
-    {% endif %}
-
 </div>
+
+<!-- Auto-refresh per richieste in corso -->
+{% if purchase_request.status == 'pending' or purchase_request.status == 'approved' %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Refresh ogni 30 secondi per richieste attive
+    setTimeout(function() {
+        window.location.reload();
+    }, 30000);
+});
+</script>
+{% endif %}
 {% endblock %}
