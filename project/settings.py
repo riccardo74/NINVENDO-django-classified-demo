@@ -103,6 +103,12 @@ STATICFILES_DIRS = (
     # Don't forget to use absolute paths, not relative paths.
 )
 
+# Usa Cloudinary per i MEDIA (file caricati dagli utenti)
+#DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
+
+# Se vuoi (non obbligatorio) servire anche gli static con Cloudinary:
+# STATICFILES_STORAGE = "cloudinary_storage.storage.StaticHashedCloudinaryStorage"
+
 STORAGES = {
     "default": {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
@@ -164,7 +170,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.sitemaps',
     'django.contrib.sites',
-    'django.contrib.staticfiles',
+    
 
     'bootstrapform',
     'sorl.thumbnail',
@@ -180,7 +186,12 @@ INSTALLED_APPS = [
     'demo',
     'registration',  
     "trade",
-    'payments'
+    'payments',
+
+    "cloudinary",
+    "cloudinary_storage",
+    # se usi admin/upload via forms:
+    "django.contrib.staticfiles"
 ]
 
 # ⭐ CONFIGURAZIONI CRISPY FORMS

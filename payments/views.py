@@ -230,7 +230,7 @@ class CreateCheckoutSessionView(LoginRequiredMixin, View):
                     logger.warning(f"Impossibile recuperare Checkout Session {existing_tx.stripe_checkout_session_id}: {e}")
 
             messages.info(request, "Pagamento già avviato per questa richiesta.")
-            return redirect('payments:transaction_detail', uuid=existing_tx.uuid)
+            return redirect('payments:payment_success', uuid=existing_tx.uuid)
 
         # 5) Crea NUOVA transazione + Checkout Session
         try:
@@ -328,8 +328,7 @@ class PaymentTransactionDetailView(LoginRequiredMixin, DetailView):
 class PaymentSuccessView(LoginRequiredMixin, DetailView):
     """Pagina di successo dopo il pagamento"""
     model = PaymentTransaction
-    # 🔧 match al file reale presente nel repo: payments/payment_success.html
-    template_name = 'payments/payment_success.html'  # fix nome file
+    template_name = 'payments/payment_success.html'
     context_object_name = 'transaction'
     slug_field = 'uuid'
     slug_url_kwarg = 'uuid'
@@ -357,7 +356,7 @@ class PaymentCancelledView(LoginRequiredMixin, DetailView):
 
 
 # ----------------------------
-# CRONOLOGIE
+# CRONOLOGIE - CORREZIONE CRITICA
 # ----------------------------
 class PurchaseHistoryView(LoginRequiredMixin, ListView):
     """
@@ -367,7 +366,7 @@ class PurchaseHistoryView(LoginRequiredMixin, ListView):
     """
     model = PaymentTransaction
     template_name = 'payments/purchase_history.html'
-    context_object_name = 'transactions'   # tutte le mie transazioni (se servono altrove)
+    context_object_name = 'transactions'
     paginate_by = 20
 
     def get_queryset(self):
@@ -379,44 +378,40 @@ class PurchaseHistoryView(LoginRequiredMixin, ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
 
-        # --- TRANSAZIONI ---
+        # --- TRANSAZIONI COMPLETATE ---
         all_tx = self.get_queryset()
-        completed_qs = all_tx.filter(status=PaymentTransaction.STATUS_SUCCEEDED)
-        processing_qs = all_tx.filter(status=PaymentTransaction.STATUS_PROCESSING)
+        # CORREZIONE: Usa stringhe invece di costanti
+        completed_qs = all_tx.filter(status='succeeded')  # Era: PaymentTransaction.STATUS_SUCCEEDED
+        processing_qs = all_tx.filter(status='processing')  # Era: PaymentTransaction.STATUS_PROCESSING
 
         ctx['total_transactions'] = all_tx.count()
         ctx['completed_purchases'] = completed_qs.count()
-        # Se gli importi sono in centesimi, usa la property in euro già nel modello
         ctx['total_spent'] = sum(t.total_amount_euros for t in completed_qs)
 
-        # --- RICHIESTE ATTIVE ---
-        # payments/views.py  (dentro PurchaseHistoryView.get_context_data)
-
+        # --- RICHIESTE ATTIVE (CORREZIONE CRITICA) ---
+        # PROBLEMA RISOLTO: Escludere le richieste con transazioni completate
         active_reqs = (
             PurchaseRequest.objects
             .filter(
                 buyer=self.request.user,
-                status__in=[PurchaseRequest.STATUS_PENDING, PurchaseRequest.STATUS_APPROVED],
+                # CORREZIONE: Usa stringhe invece di costanti  
+                status__in=['pending', 'approved'],  # Era: PurchaseRequest.STATUS_PENDING, etc.
             )
-            # ⬇️ Escludi richieste già “convertite” in pagamento
-            .exclude(payment_transaction__status__in=[
-                PaymentTransaction.STATUS_PROCESSING,
-                PaymentTransaction.STATUS_SUCCEEDED,
-            ])
-            .select_related('seller', 'item')
+            # AGGIUNTO: Esclude richieste con transazioni completate
+            .exclude(payment_transaction__status='succeeded')
+            .select_related('seller', 'item', 'payment_transaction')
             .order_by('-created_at')
         )
+        
         ctx['active_requests'] = active_reqs
-        ctx['pending_requests_count']  = active_reqs.filter(status=PurchaseRequest.STATUS_PENDING).count()
-        ctx['approved_requests_count'] = active_reqs.filter(status=PurchaseRequest.STATUS_APPROVED).count()
-
+        ctx['pending_requests_count'] = active_reqs.filter(status='pending').count()
+        ctx['approved_requests_count'] = active_reqs.filter(status='approved').count()
 
         # Liste pronte per le tabelle/tab
         ctx['completed_transactions'] = completed_qs
         ctx['processing_transactions'] = processing_qs
 
         return ctx
-
 
 class SalesHistoryView(LoginRequiredMixin, ListView):
     """Cronologia vendite dell'utente (come venditore)."""
@@ -470,50 +465,80 @@ class SellerSetupView(LoginRequiredMixin, View):
 
 
 # ----------------------------
-# WEBHOOK STRIPE (esempio)
+# WEBHOOK STRIPE (CORREZIONE CRITICA)
 # ----------------------------
 @csrf_exempt
 @require_POST
 def stripe_webhook(request):
-    """Gestione webhook Stripe (semplificato)"""
+    """Gestione webhook Stripe - VERSIONE CORRETTA"""
     payload = request.body
     sig_header = request.META.get('HTTP_STRIPE_SIGNATURE', '')
     endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
 
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
+        logger.info(f"Webhook ricevuto: {event['type']}")
     except Exception as e:
         logger.error(f"Webhook signature error: {e}")
         return HttpResponse(status=400)
 
-    # Aggiorna stato transazione quando il pagamento è riuscito
-    # payments/views.py  (stripe_webhook)
-
+    # GESTIONE CHECKOUT COMPLETATO
     if event['type'] == 'checkout.session.completed':
         data = event['data']['object']
+        session_id = data.get('id')
         tx_uuid = data.get('metadata', {}).get('transaction_uuid')
+        
+        logger.info(f"Checkout completato - Session: {session_id}, TX UUID: {tx_uuid}")
+        
         if tx_uuid:
             try:
+                # Trova la transazione
                 tx = PaymentTransaction.objects.select_related('item').get(uuid=tx_uuid)
-                tx.status = PaymentTransaction.STATUS_SUCCEEDED
-                tx.save(update_fields=['status'])
-
-                # ✅ opzionale: disattiva l'annuncio venduto
-                if tx.item and getattr(tx.item, "is_active", None) is not None:
-                    tx.item.is_active = False
-                    tx.item.save(update_fields=['is_active'])
-
-                # ✅ opzionale: se vuoi “archiviare” la richiesta collegata
-                pr = getattr(tx, "purchase_request", None)
-                if pr:
-                    # se nel tuo modello esiste uno status COMPLETED/PAID, usa quello:
-                    if hasattr(PurchaseRequest, "STATUS_COMPLETED"):
+                
+                # Aggiorna Payment Intent ID se disponibile
+                if data.get('payment_intent'):
+                    tx.stripe_payment_intent_id = data['payment_intent']
+                
+                # CORREZIONE: Usa il metodo mark_as_succeeded che hai già nel model
+                tx.mark_as_succeeded()
+                
+                logger.info(f"Transazione {tx.uuid} marcata come succeeded")
+                
+                # CORREZIONE CRITICA: Aggiorna anche la PurchaseRequest
+                try:
+                    pr = getattr(tx, "purchase_request", None)
+                    if pr and hasattr(PurchaseRequest, "STATUS_COMPLETED"):
                         pr.status = PurchaseRequest.STATUS_COMPLETED
                         pr.save(update_fields=['status'])
-                    # in alternativa non cambiare status, ci pensa il filtro (punto 1)
+                        logger.info(f"PurchaseRequest {pr.uuid} marcata come completed")
+                except Exception as e:
+                    logger.error(f"Errore aggiornamento PurchaseRequest: {e}")
 
             except PaymentTransaction.DoesNotExist:
                 logger.warning(f"Transazione non trovata per uuid {tx_uuid}")
+        else:
+            # Fallback: cerca per session_id
+            try:
+                tx = PaymentTransaction.objects.select_related('item').get(
+                    stripe_checkout_session_id=session_id
+                )
+                tx.stripe_payment_intent_id = data.get('payment_intent')
+                tx.mark_as_succeeded()
+                logger.info(f"Transazione trovata per session_id e marcata come succeeded")
+            except PaymentTransaction.DoesNotExist:
+                logger.error(f"Nessuna transazione trovata per session {session_id}")
 
+    # GESTIONE PAYMENT INTENT COMPLETATO (backup)
+    elif event['type'] == 'payment_intent.succeeded':
+        payment_intent = event['data']['object']
+        pi_id = payment_intent.get('id')
+        
+        try:
+            tx = PaymentTransaction.objects.get(stripe_payment_intent_id=pi_id)
+            if tx.status != PaymentTransaction.STATUS_SUCCEEDED:
+                tx.mark_as_succeeded()
+                logger.info(f"Transazione {tx.uuid} completata via payment_intent.succeeded")
+        except PaymentTransaction.DoesNotExist:
+            logger.warning(f"Transazione non trovata per payment_intent {pi_id}")
 
     return HttpResponse(status=200)

@@ -124,24 +124,32 @@ class PaymentTransaction(models.Model):
             'total_amount_cents': total_cents,
         }
     
-    def mark_as_succeeded(self):
-        """Segna la transazione come completata"""
-        if self.status != self.STATUS_SUCCEEDED:
-            self.status = self.STATUS_SUCCEEDED
-            self.completed_at = timezone.now()
-            
-            # Disattiva l'annuncio (venduto)
-            if self.item.is_active:
-                self.item.is_active = False
-                self.item.save(update_fields=['is_active'])
-            
-            self.save(update_fields=['status', 'completed_at'])
-    
-    def mark_as_failed(self):
-        """Segna la transazione come fallita"""
-        self.status = self.STATUS_FAILED
-        self.save(update_fields=['status'])
+# In payments/models.py, nel modello PaymentTransaction:
 
+def mark_as_succeeded(self):
+    """Segna la transazione come completata"""
+    from django.utils import timezone
+    
+    if self.status != self.STATUS_SUCCEEDED:
+        self.status = self.STATUS_SUCCEEDED
+        self.completed_at = timezone.now()
+        
+        # Disattiva l'annuncio (venduto)
+        if self.item and self.item.is_active:
+            self.item.is_active = False
+            self.item.save(update_fields=['is_active'])
+        
+        # Aggiorna PurchaseRequest collegata
+        if hasattr(self, 'purchase_request') and self.purchase_request:
+            self.purchase_request.status = PurchaseRequest.STATUS_COMPLETED
+            self.purchase_request.save(update_fields=['status'])
+        
+        self.save(update_fields=['status', 'completed_at'])
+
+def mark_as_failed(self):
+    """Segna la transazione come fallita"""
+    self.status = self.STATUS_FAILED
+    self.save(update_fields=['status'])
 
 class SellerProfile(models.Model):
     """Profilo esteso per i venditori"""
