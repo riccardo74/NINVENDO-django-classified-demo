@@ -3,15 +3,21 @@
 # and user/profile pieces needed for in-app chat. Tailored for your project
 # where the marketplace app is named 'trade' (not 'market').
 
+#python proj_snapshot.py --templates all --templates-max-file-lines 400
+
+#python proj_snapshot.py --templates interesting
+
+
 from __future__ import annotations
 import os, re, sys, argparse, textwrap, pathlib, subprocess, shutil
-from typing import List
+from typing import List, Literal
 
 # ---------- Configuration ----------
 
 DEFAULT_OUT_DIR = "out"
 DEFAULT_MAX_LINES = 4000
 DEFAULT_MAX_FILE_LINES = 300
+DEFAULT_HTML_MAX_FILE_LINES = 300
 DEFAULT_GIT_MAX = 50
 
 EXCLUDE_DIRS = {
@@ -21,7 +27,7 @@ EXCLUDE_DIRS = {
     "migrations",
 }
 
-# Filenames to include anywhere
+# Filenames to include ovunque
 WANTED_FILENAMES = {
     "manage.py",
     "requirements.txt", "requirements.in", "poetry.lock", "Pipfile", "Pipfile.lock",
@@ -30,29 +36,31 @@ WANTED_FILENAMES = {
     "README.md", "README.rst", "README.txt",
 }
 
-# Suffixes we consider "code/text" worth embedding
+# Suffix “code/text” che vale la pena incorporare
 CODE_SUFFIXES = {
     ".py", ".html", ".txt", ".yaml", ".yml", ".toml", ".lock",
     ".js", ".ts", ".css"
 }
 
-# App-level code files we always want
+# File app-level che vogliamo sempre
 APP_CODE_FILES = {
     "models.py", "views.py", "urls.py", "forms.py", "admin.py",
     "serializers.py", "apps.py", "signals.py"
 }
 
-# App names we care most about for this task
-PRIMARY_APP_NAMES = {"trade"}  # your marketplace app
+# App di interesse
+PRIMARY_APP_NAMES = {"trade","payments"}  # marketplace app
 MSG_APP_NAMES = {"messaging", "chat", "inbox"}
 USER_APP_NAMES = {"users", "accounts", "profiles"}
 
-# Template name hints (kept, but we also include entire /templates/trade/)
+# Parole chiave template (manteniamo, ma ora c'è una modalità "all")
 TEMPLATE_KEYWORDS = (
     "login", "password_reset", "registration", "email_sent", "_base",
     "base", "trade", "account", "signup", "logout", "profile",
     "conversation", "message", "chat", "inbox"
 )
+
+TemplatesMode = Literal["all", "interesting", "none"]
 
 # ---------- Redaction ----------
 
@@ -94,16 +102,15 @@ def is_template(path: pathlib.Path) -> bool:
     return path.suffix == ".html"
 
 def template_is_interesting(path: pathlib.Path) -> bool:
-    """Include if name matches hints, or path is inside templates/trade/, templates/messaging|chat|inbox/."""
+    """Originale: include se matcha parole chiave o è dentro templates/{trade|messaging|chat|inbox}."""
     if not is_template(path):
         return False
     name = path.name.lower()
     if any(k in name for k in TEMPLATE_KEYWORDS):
         return True
     parts = {p.lower() for p in path.parts}
-    # capture whole subtrees for these features
     if "templates" in parts:
-        if "trade" in parts or "messaging" in parts or "chat" in parts or "inbox" in parts:
+        if {"trade","messaging","chat","inbox"} & parts:
             return True
     return False
 
@@ -113,7 +120,36 @@ def iter_files(root: pathlib.Path):
             continue
         yield p
 
-def collect_candidate_files(root: pathlib.Path) -> List[pathlib.Path]:
+def collect_template_files(root: pathlib.Path, mode: TemplatesMode) -> List[pathlib.Path]:
+    """Raccoglie i template in base alla modalità."""
+    if mode == "none":
+        return []
+    files: List[pathlib.Path] = []
+    for p in iter_files(root):
+        if not is_template(p):
+            continue
+        rel = p.relative_to(root)
+        if is_excluded_dir(rel.parent):
+            continue
+        if mode == "all":
+            # prendi tutti gli .html sotto qualsiasi cartella 'templates'
+            if "templates" in (x.lower() for x in rel.parts):
+                files.append(p)
+        else:
+            # mode == "interesting"
+            if template_is_interesting(p):
+                files.append(p)
+    # de-dup preservando l'ordine
+    seen = set()
+    ordered = []
+    for f in files:
+        rp = f.as_posix()
+        if rp not in seen:
+            seen.add(rp)
+            ordered.append(f)
+    return ordered
+
+def collect_candidate_files(root: pathlib.Path, templates_mode: TemplatesMode) -> List[pathlib.Path]:
     cand: List[pathlib.Path] = []
 
     # 1) Generic important files and project-level settings/urls
@@ -139,22 +175,16 @@ def collect_candidate_files(root: pathlib.Path) -> List[pathlib.Path]:
         if is_app_code_file(p):
             cand.append(p)
 
-    # 3) Templates of interest (heuristic-expanded)
-    for p in iter_files(root):
-        rel = p.relative_to(root)
-        if is_excluded_dir(rel.parent):
-            continue
-        if template_is_interesting(p):
-            cand.append(p)
+    # 3) Templates (modalità configurabile)
+    cand += collect_template_files(root, templates_mode)
 
-    # 4) PRIORITIZE/INCLUDE: trade, messaging/chat/inbox, users/accounts/profiles
+    # 4) PRIORITIZE/INCLUDE: trade, messaging/chat/inbox, users/accounts/profiles (codice + template interessanti)
     important_app_roots = set()
     for app_name in list(PRIMARY_APP_NAMES | MSG_APP_NAMES | USER_APP_NAMES):
         for p in root.rglob(app_name):
             if p.is_dir() and not is_excluded_dir(p.relative_to(root)):
                 important_app_roots.add(p)
 
-    # Add all primary code files and templates from those apps
     for app_root in sorted(important_app_roots):
         for p in app_root.rglob("*"):
             if p.is_dir():
@@ -162,7 +192,7 @@ def collect_candidate_files(root: pathlib.Path) -> List[pathlib.Path]:
             rel = p.relative_to(root)
             if is_excluded_dir(rel.parent):
                 continue
-            if p.name in APP_CODE_FILES or template_is_interesting(p):
+            if p.name in APP_CODE_FILES or (templates_mode != "none" and template_is_interesting(p)):
                 cand.append(p)
 
     # De-duplicate preserving order
@@ -242,8 +272,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=DEFAULT_OUT_DIR, help="Output directory (default: out)")
     ap.add_argument("--max-lines", type=int, default=DEFAULT_MAX_LINES, help="Max total lines in CONTEXT.md")
-    ap.add_argument("--max-file-lines", type=int, default=DEFAULT_MAX_FILE_LINES, help="Max lines per file excerpt")
+    ap.add_argument("--max-file-lines", type=int, default=DEFAULT_MAX_FILE_LINES, help="Max lines per non-HTML file excerpt")
+    ap.add_argument("--templates-max-file-lines", type=int, default=DEFAULT_HTML_MAX_FILE_LINES, help="Max lines per HTML template excerpt")
     ap.add_argument("--git-max", type=int, default=DEFAULT_GIT_MAX, help="Max number of git commits to include (0 to disable)")
+    ap.add_argument("--templates", choices=["all","interesting","none"], default="interesting",
+                    help="How to include templates: 'all' (every .html under templates/), 'interesting' (heuristic), 'none' (skip)")
     args = ap.parse_args()
 
     root = pathlib.Path(".").resolve()
@@ -251,13 +284,25 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     context_md = out_dir / "CONTEXT.md"
 
-    files = collect_candidate_files(root)
+    files = collect_candidate_files(root, args.templates)
+
+    # Pre-split per sezione: templates vs altri
+    template_files: List[pathlib.Path] = []
+    other_files: List[pathlib.Path] = []
+    for p in files:
+        if is_template(p):
+            # includiamo solo quelli nelle cartelle 'templates' quando in modalità 'all'
+            # ma se arrivano qui da 'interesting' li teniamo uguale
+            template_files.append(p)
+        else:
+            other_files.append(p)
 
     # Assemble document
     doc_parts = []
     doc_parts.append("# Project Snapshot (Django)\n")
     doc_parts.append(f"- Root: `{root}`")
     doc_parts.append(f"- Generated by: `snapshot_django.py`")
+    doc_parts.append(f"- Templates mode: `{args.templates}`")
     doc_parts.append("\n---\n")
 
     # Tree
@@ -274,27 +319,38 @@ def main():
             doc_parts.append("```\n" + gh + "\n```\n")
             doc_parts.append("\n---\n")
 
-    # Files (redacted excerpts)
-    doc_parts.append("## Key Files (redacted excerpts)\n")
-    for p in files:
-        rp = p.relative_to(root).as_posix()
-        doc_parts.append(f"\n### {rp}\n")
-        code = read_file_excerpt(p, args.max_file_lines)
-        fence = "```"
-        lang = ""
-        if p.suffix == ".py":
-            lang = "python"
-        elif p.suffix == ".html":
+    # Templates Snapshot
+    if template_files:
+        doc_parts.append("## Templates Snapshot\n")
+        for p in template_files:
+            rp = p.relative_to(root).as_posix()
+            doc_parts.append(f"\n### {rp}\n")
+            code = read_file_excerpt(p, args.templates_max_file_lines)
+            fence = "```"
             lang = "html"
-        elif p.suffix in {".yaml", ".yml"}:
-            lang = "yaml"
-        elif p.suffix in {".js"}:
-            lang = "javascript"
-        elif p.suffix in {".ts"}:
-            lang = "typescript"
-        elif p.suffix in {".css"}:
-            lang = "css"
-        doc_parts.append(f"{fence}{lang}\n{code}\n{fence}\n")
+            doc_parts.append(f"{fence}{lang}\n{code}\n{fence}\n")
+        doc_parts.append("\n---\n")
+
+    # Key Files (non-HTML)
+    if other_files:
+        doc_parts.append("## Key Files (redacted excerpts)\n")
+        for p in other_files:
+            rp = p.relative_to(root).as_posix()
+            doc_parts.append(f"\n### {rp}\n")
+            code = read_file_excerpt(p, args.max_file_lines)
+            fence = "```"
+            lang = ""
+            if p.suffix == ".py":
+                lang = "python"
+            elif p.suffix == ".yaml" or p.suffix == ".yml":
+                lang = "yaml"
+            elif p.suffix == ".js":
+                lang = "javascript"
+            elif p.suffix == ".ts":
+                lang = "typescript"
+            elif p.suffix == ".css":
+                lang = "css"
+            doc_parts.append(f"{fence}{lang}\n{code}\n{fence}\n")
 
     # Trim to max total lines
     full_text = "\n".join(doc_parts)

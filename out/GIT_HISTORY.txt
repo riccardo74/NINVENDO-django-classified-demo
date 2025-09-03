@@ -1,3 +1,7 @@
+01abd74 | 2025-09-02 | riccardo74 | Merge branch 'baratto' into master
+fdf3425 | 2025-09-02 | riccardo74 | Add media URL serving in DEBUG mode
+2b09447 | 2025-09-02 | riccardo74 | Aggiungi supporto immagini alla messaggistica degli scambi
+c1af384 | 2025-09-01 | riccardo74 | Refactor TradeProposal state management to use CharField
 1adefaf | 2025-09-01 | riccardo74 | Add project snapshot and trade module integration
 1c788d0 | 2025-08-31 | riccardo74 | Move registration templates and add base.html bridge
 eff7548 | 2025-08-31 | riccardo74 | Add trade (barter) module with user proposals
@@ -44,7 +48,3 @@ fa4bd1d | 2020-08-04 | Sergey Lyapustin | Merge pull request #107 from slyapusti
 23fda2a | 2020-04-06 | Sergey Lyapustin | Merge pull request #97 from slyapustin/pyup-update-psycopg2-binary-2.8.4-to-2.8.5
 3b21409 | 2020-04-06 | pyup-bot | Update psycopg2-binary from 2.8.4 to 2.8.5
 d73b732 | 2020-04-01 | Sergey Lyapustin | Merge pull request #96 from slyapustin/pyup-update-django-3.0.4-to-3.0.5
-3ad81f1 | 2020-04-01 | pyup-bot | Update django from 3.0.4 to 3.0.5
-1a02004 | 2020-03-04 | Sergey Lyapustin | Merge pull request #95 from slyapustin/pyup-update-django-3.0.3-to-3.0.4
-2842e25 | 2020-03-04 | pyup-bot | Update django from 3.0.3 to 3.0.4
-2c1e571 | 2020-03-04 | Sergey Lyapustin | Update README.md

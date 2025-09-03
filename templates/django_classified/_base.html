@@ -8,7 +8,7 @@
   <head>
     <title>{% block title %}NINVENDO - A swap and market place for nintendo lovers{% endblock %}</title>
 
-    <meta name="description" content="NINVENDO - A swap and market place for nintendo lovers">>/>
+    <meta name="description" content="NINVENDO - A swap and market place for nintendo lovers">
     <meta name="keywords" content="{% block meta_keywords %}{% endblock meta_keywords %}"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {% if GOOGLE_SITE_VERIFICATION_ID %}
@@ -51,16 +51,34 @@
               </a>
               
             <ul class="dropdown-menu">
+                <!-- SEZIONE PERSONALE -->
                 <li><a href="{% url 'django_classified:user-items' %}">{% trans "My items" %} ({{ user.item_set.count }})</a></li>
-                
-                <!-- Un solo link profilo -->
-                <li><a href="{% url 'trade:profile' %}">📝 Il Mio Profilo</a></li>
-
-                <!-- Link scambi -->
-                <li><a href="{% url 'trade:inbox' %}">Scambi (ricevuti)</a></li>
-                <li><a href="{% url 'trade:sent' %}">Scambi (inviati)</a></li>
+                <li><a href="{% url 'trade:profile' %}">🔧 Il Mio Profilo</a></li>
 
                 <li class="divider"></li>
+
+                <!-- SEZIONE VENDITE -->
+                <li class="dropdown-header">🏪 VENDITE</li>
+                <li><a href="{% url 'payments:seller_requests' %}">📋 Richieste Ricevute</a></li>
+                <li><a href="{% url 'payments:sales_history' %}">💸 Le Mie Vendite</a></li>
+                <li><a href="{% url 'payments:seller_setup' %}">⚙️ Impostazioni Vendite</a></li>
+
+                <li class="divider"></li>
+
+                <!-- SEZIONE ACQUISTI -->
+                <li class="dropdown-header">🛒 ACQUISTI</li>
+                <li><a href="{% url 'payments:purchase_history' %}">💰 I Miei Acquisti</a></li>
+
+                <li class="divider"></li>
+
+                <!-- SEZIONE SCAMBI -->
+                <li class="dropdown-header">🔄 SCAMBI</li>
+                <li><a href="{% url 'trade:inbox' %}">📥 Scambi (ricevuti)</a></li>
+                <li><a href="{% url 'trade:sent' %}">📤 Scambi (inviati)</a></li>
+
+                <li class="divider"></li>
+                
+                <!-- LOGOUT -->
                 <li>
                     <form method="post" action="{% url 'logout' %}" style="margin:0; padding:0;">
                         {% csrf_token %}

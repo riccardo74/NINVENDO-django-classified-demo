@@ -179,7 +179,8 @@ INSTALLED_APPS = [
 
     'demo',
     'registration',  
-    "trade"
+    "trade",
+    'payments'
 ]
 
 # ⭐ CONFIGURAZIONI CRISPY FORMS
@@ -247,3 +248,23 @@ vars().update(env.email_url())
 DCF_CURRENCY = 'EUR'
 DCF_DISPLAY_EMPTY_GROUPS = True
 GOOGLE_ANALYTICS_PROPERTY_ID = os.environ.get('GOOGLE_ANALYTICS_PROPERTY_ID')
+
+
+# Aggiungi questa sezione alla fine del tuo project/settings.py
+
+# ============================================
+# CONFIGURAZIONE STRIPE PAGAMENTI (TEMPORANEA)
+# ============================================
+
+# Configurazione temporanea per testing (sostituisci con chiavi reali)
+STRIPE_PUBLIC_KEY = env('STRIPE_PUBLIC_KEY', default='pk_test_placeholder')
+STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='sk_test_placeholder') 
+STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='whsec_placeholder')
+
+# Dominio per redirect Stripe
+STRIPE_DOMAIN = env('STRIPE_DOMAIN', default='http://127.0.0.1:8000')
+
+# Commissioni
+PLATFORM_FEE_PERCENTAGE = env.float('PLATFORM_FEE_PERCENTAGE', default=3.0)
+STRIPE_FEE_PERCENTAGE = env.float('STRIPE_FEE_PERCENTAGE', default=1.4)
+STRIPE_FEE_FIXED_CENTS = env.int('STRIPE_FEE_FIXED_CENTS', default=25)

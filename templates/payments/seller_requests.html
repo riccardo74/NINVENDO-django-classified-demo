@@ -1,0 +1,237 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Richieste di Acquisto Ricevute{% endblock %}
+
+{% block body %}
+<div class="container">
+    <div class="row">
+        <div class="col-md-12">
+            <h3>🏪 Richieste di Acquisto Ricevute</h3>
+            
+            {% if pending_count > 0 %}
+                <div class="alert alert-warning">
+                    <strong>⚠️ {{ pending_count }} richiesta{{ pending_count|pluralize:"," }} in attesa di approvazione</strong>
+                </div>
+            {% endif %}
+            
+            {% if requests %}
+                {% for request in requests %}
+                <div class="card mb-4 {% if request.status == 'pending' %}border-warning{% elif request.status == 'approved' %}border-success{% elif request.status == 'rejected' %}border-danger{% elif request.status == 'expired' %}border-secondary{% endif %}">
+                    
+                    <!-- Header con stato -->
+                    <div class="card-header {% if request.status == 'pending' %}bg-warning{% elif request.status == 'approved' %}bg-success text-white{% elif request.status == 'rejected' %}bg-danger text-white{% elif request.status == 'expired' %}bg-secondary text-white{% endif %}">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <h5 class="mb-1">
+                                    {% if request.status == 'pending' %}⏳{% elif request.status == 'approved' %}✅{% elif request.status == 'rejected' %}❌{% elif request.status == 'expired' %}⌛{% endif %}
+                                    {{ request.item.title }}
+                                </h5>
+                                <small>
+                                    Richiesta #{{ request.uuid.hex|slice:":8" }} • 
+                                    {{ request.created|date:"d/m/Y H:i" }}
+                                    {% if request.expires_at %}
+                                        • Scade: {{ request.expires_at|date:"d/m/Y H:i" }}
+                                    {% endif %}
+                                </small>
+                            </div>
+                            <div class="col-md-4 text-right">
+                                <span class="badge badge-{% if request.status == 'pending' %}warning{% elif request.status == 'approved' %}success{% elif request.status == 'rejected' %}danger{% else %}secondary{% endif %} badge-lg">
+                                    {{ request.get_status_display }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card-body">
+                        <div class="row">
+                            <!-- Dettagli acquirente -->
+                            <div class="col-md-4">
+                                <h6>🛒 Acquirente</h6>
+                                <p class="mb-1"><strong>{{ request.buyer.username }}</strong></p>
+                                <p class="mb-1">📧 {{ request.buyer.email }}</p>
+                                
+                                {% if request.buyer.seller_profile %}
+                                    <small class="text-muted">
+                                        {% if request.buyer.seller_profile.total_sales > 0 %}
+                                            ⭐ {{ request.buyer.seller_profile.average_rating|floatformat:1 }}/5
+                                            ({{ request.buyer.seller_profile.total_sales }} vendite)
+                                        {% else %}
+                                            👤 Nuovo utente
+                                        {% endif %}
+                                    </small>
+                                {% endif %}
+                            </div>
+                            
+                            <!-- Dettagli prodotto e consegna -->
+                            <div class="col-md-4">
+                                <h6>📦 Articolo e Consegna</h6>
+                                <p class="mb-1"><strong>💰 €{{ request.item.price }}</strong></p>
+                                <p class="mb-1">
+                                    🚚 {{ request.get_delivery_method_display }}
+                                </p>
+                                
+                                {% if request.shipping_address %}
+                                    <div class="alert alert-light p-2 mt-2">
+                                        <small><strong>📍 Indirizzo:</strong><br>{{ request.shipping_address }}</small>
+                                    </div>
+                                {% endif %}
+                            </div>
+                            
+                            <!-- Importi -->
+                            <div class="col-md-4">
+                                <h6>💳 Riepilogo Importi</h6>
+                                <div class="table-sm">
+                                    {% with fees=request.item.price|floatformat:2 %}
+                                        <small>
+                                            Prezzo: €{{ request.item.price }}<br>
+                                            + Commissioni: ~€{{ fees|add:"0"|floatformat:2 }}<br>
+                                            <strong>Totale acquirente: ~€{{ request.item.price|add:fees|floatformat:2 }}</strong><br>
+                                            <em class="text-muted">Netto a te: €{{ request.item.price }}</em>
+                                        </small>
+                                    {% endwith %}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Messaggio dell'acquirente -->
+                        {% if request.message %}
+                        <div class="row mt-3">
+                            <div class="col-md-12">
+                                <div class="alert alert-info">
+                                    <h6>💬 Messaggio dell'acquirente:</h6>
+                                    <p class="mb-0">{{ request.message|linebreaks }}</p>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                        
+                        <!-- Azioni disponibili -->
+                        <div class="row mt-3">
+                            <div class="col-md-12">
+                                {% if request.status == 'pending' and not request.is_expired %}
+                                    <div class="btn-group" role="group">
+                                        <form method="post" action="{% url 'payments:process_request' request.uuid 'approve' %}" style="display:inline;" 
+                                              onsubmit="return confirm('✅ Approvare questa richiesta di acquisto?\n\nL\'acquirente potrà procedere al pagamento.')">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-success">
+                                                ✅ Approva Richiesta
+                                            </button>
+                                        </form>
+                                        
+                                        <form method="post" action="{% url 'payments:process_request' request.uuid 'reject' %}" style="display:inline;"
+                                              onsubmit="return confirm('❌ Rifiutare questa richiesta di acquisto?\n\nL\'acquirente riceverà una notifica.')">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-outline-danger">
+                                                ❌ Rifiuta
+                                            </button>
+                                        </form>
+                                    </div>
+                                    
+                                {% elif request.status == 'approved' %}
+                                    <div class="alert alert-success">
+                                        <strong>✅ Richiesta Approvata</strong>
+                                        <p class="mb-1">L'acquirente può ora procedere al pagamento.</p>
+                                        {% if request.payment_transaction %}
+                                            <p class="mb-0">
+                                                <a href="{% url 'payments:request_detail' request.uuid %}" class="btn btn-sm btn-outline-success">
+                                                    👁️ Vedi Stato Pagamento
+                                                </a>
+                                            </p>
+                                        {% endif %}
+                                    </div>
+                                    
+                                {% elif request.status == 'rejected' %}
+                                    <div class="alert alert-danger">
+                                        <strong>❌ Richiesta Rifiutata</strong>
+                                    </div>
+                                    
+                                {% elif request.is_expired %}
+                                    <div class="alert alert-secondary">
+                                        <strong>⌛ Richiesta Scaduta</strong>
+                                        <p class="mb-0">Questa richiesta è scaduta automaticamente.</p>
+                                    </div>
+                                {% endif %}
+                                
+                                <!-- Link dettaglio -->
+                                <a href="{% url 'payments:request_detail' request.uuid %}" class="btn btn-outline-info btn-sm ml-2">
+                                    👁️ Vedi Dettagli Completi
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+                
+                <!-- Paginazione -->
+                {% if is_paginated %}
+                <nav aria-label="Paginazione richieste">
+                    <ul class="pagination justify-content-center">
+                        {% if page_obj.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page_obj.previous_page_number }}">&laquo; Precedente</a>
+                            </li>
+                        {% endif %}
+                        
+                        <li class="page-item active">
+                            <span class="page-link">Pagina {{ page_obj.number }} di {{ page_obj.paginator.num_pages }}</span>
+                        </li>
+                        
+                        {% if page_obj.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page_obj.next_page_number }}">Successiva &raquo;</a>
+                            </li>
+                        {% endif %}
+                    </ul>
+                </nav>
+                {% endif %}
+                
+            {% else %}
+                <!-- Nessuna richiesta -->
+                <div class="jumbotron text-center">
+                    <h4>📭 Nessuna Richiesta di Acquisto</h4>
+                    <p class="lead">Non hai ancora ricevuto richieste di acquisto per i tuoi annunci.</p>
+                    
+                    <hr class="my-4">
+                    
+                    <div class="row justify-content-center">
+                        <div class="col-md-8">
+                            <h6>💡 Suggerimenti per ricevere più richieste:</h6>
+                            <ul class="text-left">
+                                <li><strong>Prezzi competitivi:</strong> Confronta i tuoi prezzi con annunci simili</li>
+                                <li><strong>Foto di qualità:</strong> Aggiungi immagini chiare dei tuoi articoli</li>
+                                <li><strong>Descrizioni dettagliate:</strong> Spiega le condizioni del prodotto</li>
+                                <li><strong>Pagamenti online:</strong> Facilita gli acquisti abilitando Stripe</li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <a class="btn btn-primary btn-lg" href="{% url 'django_classified:user-items' %}" role="button">
+                        📝 Gestisci i Tuoi Annunci
+                    </a>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Script per funzionalità aggiuntive -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto-refresh per richieste pendenti
+    const pendingCount = {{ pending_count|default:0 }};
+    if (pendingCount > 0) {
+        // Refresh ogni 2 minuti se ci sono richieste pendenti
+        setTimeout(function() {
+            window.location.reload();
+        }, 120000);
+    }
+    
+    // Suoni di notifica (opzionale)
+    if (pendingCount > 0 && 'Notification' in window) {
+        // Chiedi permesso notifiche
+        Notification.requestPermission();
+    }
+});
+</script>
+{% endblock %}

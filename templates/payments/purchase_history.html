@@ -1,0 +1,233 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}I Miei Acquisti{% endblock %}
+
+{% block body %}
+<div class="container">
+    <h3>💰 I Miei Acquisti</h3>
+    
+    <!-- Filtri -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h6>🔍 Filtra Acquisti</h6>
+                </div>
+                <div class="card-body">
+                    <form method="get" class="form-inline">
+                        <div class="form-group mr-3">
+                            <label for="status" class="mr-2">Stato:</label>
+                            <select name="status" class="form-control">
+                                <option value="">Tutti</option>
+                                <option value="pending">In Attesa</option>
+                                <option value="processing">In Elaborazione</option>
+                                <option value="succeeded">Completato</option>
+                                <option value="failed">Fallito</option>
+                                <option value="cancelled">Annullato</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-info">Filtra</button>
+                        <a href="?" class="btn btn-secondary ml-2">Reset</a>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if transactions %}
+        <!-- Statistiche -->
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="card bg-info text-white">
+                    <div class="card-body text-center">
+                        <h4>{{ transactions|length }}</h4>
+                        <p class="mb-0">Transazioni Totali</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card bg-success text-white">
+                    <div class="card-body text-center">
+                        <h4>{{ transactions|dictsort:"status"|dictsortreversed:"succeeded"|length }}</h4>
+                        <p class="mb-0">Acquisti Completati</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card bg-warning text-white">
+                    <div class="card-body text-center">
+                        <h4>€{% widthratio transactions|length 1 1 %}.00</h4>
+                        <p class="mb-0">Speso Totale*</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lista Transazioni -->
+        <div class="card">
+            <div class="card-header">
+                <h5>📋 Cronologia Acquisti</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Data</th>
+                                <th>Articolo</th>
+                                <th>Venditore</th>
+                                <th>Importo</th>
+                                <th>Stato</th>
+                                <th>Azioni</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for transaction in transactions %}
+                            <tr>
+                                <td>{{ transaction.created_at|date:"d/m/Y H:i" }}</td>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        {% if transaction.item.image_set.first %}
+                                            <img src="{{ transaction.item.image_set.first.file.url }}" 
+                                                 alt="{{ transaction.item.title }}" 
+                                                 class="mr-2 rounded" style="width: 40px; height: 40px; object-fit: cover;">
+                                        {% endif %}
+                                        <div>
+                                            <strong>{{ transaction.item.title|truncatechars:30 }}</strong>
+                                            {% if transaction.item.description %}
+                                                <br><small class="text-muted">{{ transaction.item.description|truncatechars:50 }}</small>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <strong>{{ transaction.seller.username }}</strong>
+                                    {% if transaction.seller.seller_profile %}
+                                        <br><small class="text-muted">⭐ {{ transaction.seller.seller_profile.average_rating|floatformat:1 }}/5</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <strong>€{{ transaction.total_amount_euros|floatformat:2 }}</strong>
+                                    <br><small class="text-muted">
+                                        Articolo: €{{ transaction.item_price_euros|floatformat:2 }}<br>
+                                        Commissioni: €{{ transaction.platform_fee_euros|add:transaction.stripe_fee_euros|floatformat:2 }}
+                                    </small>
+                                </td>
+                                <td>
+                                    {% if transaction.status == 'pending' %}
+                                        <span class="badge badge-warning">⏳ In Attesa</span>
+                                    {% elif transaction.status == 'processing' %}
+                                        <span class="badge badge-info">🔄 In Elaborazione</span>
+                                    {% elif transaction.status == 'succeeded' %}
+                                        <span class="badge badge-success">✅ Completato</span>
+                                    {% elif transaction.status == 'failed' %}
+                                        <span class="badge badge-danger">❌ Fallito</span>
+                                    {% elif transaction.status == 'cancelled' %}
+                                        <span class="badge badge-secondary">🚫 Annullato</span>
+                                    {% elif transaction.status == 'refunded' %}
+                                        <span class="badge badge-warning">💸 Rimborsato</span>
+                                    {% else %}
+                                        <span class="badge badge-light">{{ transaction.get_status_display }}</span>
+                                    {% endif %}
+                                    
+                                    {% if transaction.completed_at %}
+                                        <br><small class="text-muted">{{ transaction.completed_at|date:"d/m/Y" }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group-vertical btn-group-sm">
+                                        <a href="{{ transaction.get_absolute_url }}" class="btn btn-outline-info btn-sm">
+                                            👁️ Dettagli
+                                        </a>
+                                        
+                                        {% if transaction.status == 'succeeded' %}
+                                            <a href="{{ transaction.item.get_absolute_url }}" class="btn btn-outline-primary btn-sm">
+                                                🎮 Vedi Articolo
+                                            </a>
+                                        {% endif %}
+                                        
+                                        {% if transaction.shipping_address %}
+                                            <button class="btn btn-outline-secondary btn-sm" 
+                                                    title="{{ transaction.shipping_address }}"
+                                                    data-toggle="tooltip">
+                                                📦 Spedizione
+                                            </button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Paginazione -->
+        {% if is_paginated %}
+        <nav aria-label="Paginazione acquisti" class="mt-4">
+            <ul class="pagination justify-content-center">
+                {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}">« Precedente</a>
+                    </li>
+                {% endif %}
+                
+                {% for num in page_obj.paginator.page_range %}
+                    {% if page_obj.number == num %}
+                        <li class="page-item active">
+                            <span class="page-link">{{ num }}</span>
+                        </li>
+                    {% else %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ num }}">{{ num }}</a>
+                        </li>
+                    {% endif %}
+                {% endfor %}
+                
+                {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}">Successiva »</a>
+                    </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+
+    {% else %}
+        <!-- Stato Vuoto -->
+        <div class="jumbotron text-center">
+            <h4>🛍️ Nessun Acquisto Ancora</h4>
+            <p class="lead">Non hai ancora effettuato acquisti attraverso il sistema di pagamenti.</p>
+            <hr class="my-4">
+            <p>Esplora gli annunci disponibili e trova quello che fa per te!</p>
+            <a class="btn btn-primary btn-lg" href="{% url 'django_classified:index' %}">🔍 Esplora Annunci</a>
+        </div>
+    {% endif %}
+
+    <!-- Note -->
+    <div class="alert alert-info mt-4">
+        <h6>ℹ️ Note Importanti</h6>
+        <ul class="mb-0">
+            <li><strong>Pagamenti Sicuri:</strong> Tutti i pagamenti sono elaborati tramite Stripe con crittografia SSL</li>
+            <li><strong>Commissioni:</strong> Include commissione piattaforma (3%) e commissione Stripe (1.4% + €0.25)</li>
+            <li><strong>Supporto:</strong> Per problemi con gli acquisti contatta <a href="mailto:{{ DEFAULT_FROM_EMAIL }}">{{ DEFAULT_FROM_EMAIL }}</a></li>
+        </ul>
+    </div>
+
+    <!-- Link navigazione -->
+    <div class="text-center mt-4">
+        <a href="{% url 'django_classified:index' %}" class="btn btn-secondary">🏠 Torna alla Home</a>
+        <a href="{% url 'payments:sales_history' %}" class="btn btn-outline-info">💸 Le Mie Vendite</a>
+        <a href="{% url 'payments:seller_setup' %}" class="btn btn-outline-success">⚙️ Configurazione Vendite</a>
+    </div>
+</div>
+
+<!-- Script per tooltip -->
+<script>
+$(function () {
+    $('[data-toggle="tooltip"]').tooltip()
+})
+</script>
+{% endblock %}

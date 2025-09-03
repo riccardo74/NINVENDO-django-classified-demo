@@ -1,0 +1,203 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n widget_tweaks %}
+
+{% block title %}Impostazioni Venditore{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 700px;">
+    <h3>⚙️ Impostazioni Venditore</h3>
+    
+    {% if is_new_seller %}
+        <div class="alert alert-info">
+            <h5>👋 Benvenuto come Venditore!</h5>
+            <p class="mb-0">Configura le tue preferenze per iniziare a vendere su NINVENDO.</p>
+        </div>
+    {% endif %}
+    
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h5>💰 Configurazione Vendite</h5>
+        </div>
+        <div class="card-body">
+            <form method="post">
+                {% csrf_token %}
+                
+                <!-- Accetta pagamenti -->
+                <div class="form-group">
+                    <div class="form-check">
+                        {{ form.accepts_payments|add_class:"form-check-input" }}
+                        <label class="form-check-label" for="{{ form.accepts_payments.id_for_label }}">
+                            <strong>💳 Accetta pagamenti online</strong>
+                        </label>
+                    </div>
+                    <small class="form-text text-muted">
+                        Permetti agli utenti di acquistare i tuoi annunci con carte di credito/debito tramite Stripe
+                    </small>
+                    {% if form.accepts_payments.errors %}
+                        <div class="text-danger">{{ form.accepts_payments.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <hr>
+
+                <!-- Auto-approvazione -->
+                <div class="form-group">
+                    <div class="form-check">
+                        {{ form.auto_accept_payments|add_class:"form-check-input" }}
+                        <label class="form-check-label" for="{{ form.auto_accept_payments.id_for_label }}">
+                            <strong>⚡ Approva automaticamente le richieste</strong>
+                        </label>
+                    </div>
+                    <small class="form-text text-muted">
+                        Le richieste di acquisto saranno approvate automaticamente senza la tua conferma manuale
+                    </small>
+                    <div class="alert alert-warning mt-2">
+                        <small>
+                            <strong>⚠️ Attenzione:</strong> Sconsigliato per articoli di valore elevato. 
+                            Con l'approvazione automatica gli acquirenti potranno procedere immediatamente al pagamento.
+                        </small>
+                    </div>
+                    {% if form.auto_accept_payments.errors %}
+                        <div class="text-danger">{{ form.auto_accept_payments.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <hr>
+
+                <!-- Commissioni info -->
+                <div class="alert alert-light">
+                    <h6>📊 Sistema Commissioni</h6>
+                    <p class="mb-2">Su ogni vendita vengono applicate automaticamente:</p>
+                    <ul class="mb-2">
+                        <li><strong>3% di commissione piattaforma NINVENDO</strong></li>
+                        <li><strong>1.4% + €0.25 di commissione Stripe</strong> (processore pagamenti)</li>
+                    </ul>
+                    <p class="mb-0 small text-muted">
+                        Le commissioni sono a carico dell'acquirente e vengono aggiunte automaticamente al prezzo finale.
+                        Tu riceverai esattamente l'importo pubblicato nel tuo annuncio.
+                    </p>
+                </div>
+
+                <!-- Pulsanti -->
+                <div class="text-center">
+                    <button type="submit" class="btn btn-success btn-lg">
+                        💾 Salva Configurazione
+                    </button>
+                    <a href="{% url 'django_classified:index' %}" class="btn btn-secondary btn-lg ml-2">
+                        ↩️ Torna alla Home
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistiche (se esistenti) -->
+    {% if profile.total_sales > 0 %}
+        <div class="card mt-4">
+            <div class="card-header bg-success text-white">
+                <h5>📈 Le Tue Statistiche</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-4">
+                        <h4 class="text-primary">{{ profile.total_sales }}</h4>
+                        <p class="text-muted">Rating Medio</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+
+    <!-- Link utili -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <h6>🔗 Link Utili</h6>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>📊 Gestione Vendite</h6>
+                    <ul class="list-unstyled">
+                        <li><a href="{% url 'payments:sales_history' %}">💸 Cronologia Vendite</a></li>
+                        <li><a href="{% url 'django_classified:user-items' %}">📝 I Miei Annunci</a></li>
+                        <li><a href="{% url 'django_classified:item-new' %}">➕ Nuovo Annuncio</a></li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h6>🔄 Sistema Scambi</h6>
+                    <ul class="list-unstyled">
+                        <li><a href="{% url 'trade:inbox' %}">📥 Scambi Ricevuti</a></li>
+                        <li><a href="{% url 'trade:sent' %}">📤 Scambi Inviati</a></li>
+                        <li><a href="{% url 'trade:profile' %}">👤 Profilo Scambi</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- FAQ -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <h6>❓ Domande Frequenti</h6>
+        </div>
+        <div class="card-body">
+            <div class="accordion" id="faqAccordion">
+                
+                <div class="card">
+                    <div class="card-header" id="faq1">
+                        <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#answer1">
+                            <strong>Come funzionano i pagamenti?</strong>
+                        </button>
+                    </div>
+                    <div id="answer1" class="collapse" data-parent="#faqAccordion">
+                        <div class="card-body">
+                            <p>I pagamenti sono gestiti tramite <strong>Stripe</strong>, uno dei sistemi più sicuri al mondo:</p>
+                            <ol>
+                                <li>L'acquirente invia una richiesta</li>
+                                <li>Tu approvi (manualmente o automaticamente)</li>
+                                <li>L'acquirente paga con carta di credito/debito</li>
+                                <li>Tu ricevi il pagamento direttamente sul tuo conto</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header" id="faq2">
+                        <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#answer2">
+                            <strong>Quando ricevo i soldi?</strong>
+                        </button>
+                    </div>
+                    <div id="answer2" class="collapse" data-parent="#faqAccordion">
+                        <div class="card-body">
+                            <p>I pagamenti vengono trasferiti automaticamente sul tuo conto corrente entro <strong>2-7 giorni lavorativi</strong> dal completamento della transazione, secondo le tempistiche standard di Stripe.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header" id="faq3">
+                        <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#answer3">
+                            <strong>Posso ancora fare scambi gratuiti?</strong>
+                        </button>
+                    </div>
+                    <div id="answer3" class="collapse" data-parent="#faqAccordion">
+                        <div class="card-body">
+                            <p><strong>Assolutamente sì!</strong> Il sistema di baratto rimane completamente gratuito e disponibile per tutti gli utenti, indipendentemente dalle impostazioni di pagamento.</p>
+                        </div>
+                    </div>
+                </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}="text-muted">Vendite Completate</p>
+                    </div>
+                    <div class="col-md-4">
+                        <h4 class="text-success">€{{ profile.total_revenue_euros|floatformat:2 }}</h4>
+                        <p class="text-muted">Ricavi Totali</p>
+                    </div>
+                    <div class="col-md-4">
+                        <h4 class="text-warning">{{ profile.average_rating|floatformat:1 }}⭐</h4>
+                        <p class

@@ -1,205 +1,295 @@
 {% extends "django_classified/_base.html" %}
-
-{% load classified %}
-{% load humanize %}
 {% load i18n %}
-{% load thumbnail %}
 
-{% block title %}{{ object.title }}{% endblock title %}
-{% block meta_description %}{{ object.description }}{% endblock meta_description %}
-{% block meta_keywords %}{{ object.get_keywords }}{% endblock meta_keywords %}
-
-{% block meta_og %}
-  <meta property="og:url" content="{{ request.scheme }}://{{ request.get_host }}{{ object.get_absolute_url }}"/>
-  <meta property="og:title" content="{{ object.title }}"/>
-  <meta property="og:description" content="{{ object.description }}"/>
-  {% for img in object.image_set.all %}
-    {% thumbnail img.file "x800" as im %}
-      <meta property="og:image" content="{{ request.scheme }}://{{ request.get_host }}{{ im.url }}"/>
-      <meta property="og:image:alt" content="{{ object.title }}"/>
-    {% endthumbnail %}
-  {% endfor %}
-{% endblock %}
+{% block title %}{{ item.title }} - {{ item.price }}€{% endblock %}
 
 {% block body %}
-
-  <div itemscope itemtype="http://schema.org/Product">
-
+<div class="container">
+    <!-- Breadcrumb esistente (se presente) -->
+    <!-- ... -->
+    
     <div class="row">
-      <div class="col-md-12">
-        <h3>
-          {% if object.area %}
-            {{ object.area }}&nbsp;&gt;&nbsp;
-          {% endif %}
-          <a href='{{ object.group.get_absolute_url }}'>{{ object.group }}</a>
-        </h3>
-      </div>
-    </div>
-
-    {% include "django_classified/admin_toolbar.inc.html" %}
-
-    <div class="row">
-      <div class="col-lg-9">
-        <h2 itemprop="name">
-          {{ object.title }}
-          {% if not object.is_active %}
-            <span class="badge badge-warning">🔒 Riservato</span>
-          {% endif %}
-        </h2>
-      </div>
-      <div class="col-lg-3">
-                <span itemprop="offers" itemscope itemtype="http://schema.org/Offer">
-                <meta itemprop="priceCurrency" content="{{ DCF.CURRENCY }}"/>
-                <h2 itemprop="price" content="{{ object.price|floatformat }}">{{ object.price|currency }}</h2>
-                </span>
-      </div>
-    </div>
-
-    <!-- ⭐ NUOVA SEZIONE BARATTO E ACQUISTO - AGGIUNTA QUI -->
-    {% if object.is_active %}
-      {% if user.is_authenticated and user != object.user %}
-        <div class="row" style="margin: 20px 0;">
-          <div class="col-lg-12">
-            <div class="alert alert-success" style="border: 2px solid #28a745;">
-              <div class="row">
-                <div class="col-md-7">
-                  <h4 style="margin-top: 5px;">💰 Come vuoi ottenere questo articolo?</h4>
-                  <p class="mb-2">Puoi acquistarlo direttamente o proporre uno scambio!</p>
-                </div>
-                <div class="col-md-5 text-right">
-                  <div class="btn-group" style="margin-bottom: 8px;">
-                    <a href="{% url 'trade:propose' object.pk %}" class="btn btn-warning btn-lg">
-                      🔄 Proponi Scambio
-                    </a>
-                    {% if object.contact_phone or object.user.email %}
-                      <a href="mailto:{{ object.user.email }}?subject=Voglio acquistare {{ object.title }}&body=Ciao {{ object.user.username }}, sono interessato ad acquistare il tuo annuncio '{{ object.title }}' al prezzo di {{ object.price|currency }}. Quando possiamo sentirci?" 
-                         class="btn btn-success btn-lg">
-                        💰 Acquista ({{ object.price|currency }})
-                      </a>
-                    {% endif %}
-                  </div>
-                  <br>
-                  <div class="btn-group">
-                    {% if object.contact_phone or object.user.email %}
-                      <a href="mailto:{{ object.user.email }}?subject=Domanda su {{ object.title }}" 
-                         class="btn btn-primary">
-                        📧 Fai una Domanda
-                      </a>
-                    {% endif %}
-                    {% if object.contact_phone and not DCF.LOGIN_TO_CONTACT %}
-                      <a href="tel:{{ object.contact_phone }}" class="btn btn-info">
-                        📞 {{ object.contact_phone }}
-                      </a>
-                    {% endif %}
-                  </div>
-                </div>
-              </div>
+        <!-- Contenuto principale annuncio -->
+        <div class="col-md-8">
+            <!-- Dettagli annuncio esistenti -->
+            <h1>{{ item.title }}</h1>
+            
+            <!-- Prezzo evidenziato -->
+            <div class="alert alert-success">
+                <h3 class="mb-0">💶 {{ item.price }}€</h3>
             </div>
-          </div>
-        </div>
-      {% elif not user.is_authenticated %}
-        <div class="row" style="margin: 20px 0;">
-          <div class="col-lg-12">
-            <div class="alert alert-info">
-              <strong>💡 Interessato a questo annuncio?</strong> 
-              <a href="{% url 'login' %}" class="btn btn-primary">Accedi</a> per acquistare o proporre scambi.
+            
+            <!-- Galleria immagini -->
+            {% if item.image_set.all %}
+                <div class="row mb-4">
+                    {% for image in item.image_set.all %}
+                        <div class="col-md-4 mb-2">
+                            <a href="{{ image.file.url }}" data-lightbox="gallery">
+                                <img src="{{ image.file.url }}" alt="{{ item.title }}" 
+                                     class="img-fluid rounded">
+                            </a>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+            
+            <!-- Descrizione -->
+            {% if item.description %}
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5>📝 Descrizione</h5>
+                    </div>
+                    <div class="card-body">
+                        {{ item.description|linebreaks }}
+                    </div>
+                </div>
+            {% endif %}
+            
+            <!-- Dettagli tecnici -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>ℹ️ Dettagli</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p><strong>📅 Pubblicato:</strong> {{ item.created|date:"d/m/Y" }}</p>
+                            <p><strong>👤 Venditore:</strong> {{ item.user.username }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            {% if item.area %}
+                                <p><strong>📍 Area:</strong> {{ item.area }}</p>
+                            {% endif %}
+                            {% if item.group %}
+                                <p><strong>📂 Categoria:</strong> {{ item.group }}</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
             </div>
-          </div>
         </div>
-      {% endif %}
-    {% else %}
-      <!-- Annuncio non più disponibile -->
-      <div class="row" style="margin: 20px 0;">
-        <div class="col-lg-12">
-          <div class="alert alert-warning">
-            <h4>🔒 Annuncio Riservato</h4>
-            <p>Questo annuncio non è più disponibile per acquisti o scambi.</p>
-            <p class="mb-0">Potrebbe essere stato riservato per uno scambio in corso.</p>
-          </div>
-        </div>
-      </div>
-    {% endif %}
-    <!-- ⭐ FINE NUOVA SEZIONE -->
-
-    <div class="row">
-      <div class="col-lg-12" itemprop="description">
-        {{ object.description|linebreaks }}
-      </div>
-    </div>
-
-    {% if object.image_count %}
-      <div class="row">
-        <div class="col-lg-12">
-          {% for img in object.image_set.all %}
-            {% thumbnail img.file "150x150" crop="center" as im %}
-              <a href='{{ img.file.url }}' data-lightbox="lightbox[{{ object.id }}]"
-                 title="{{ object.title }}">
-                <img itemprop="image" src='{{ im.url }}' alt='{{ object.title }}' title='{{ object.title }}'
-                     width="{{ im.width }}" height="{{ im.height }}" class="img-rounded"/>
-              </a>
-            {% endthumbnail %}
-          {% endfor %}
-        </div>
-      </div>
-    {% endif %}
-
-    <div class="row">
-      <div class="col-lg-12">
-        <small>{% trans 'Posted' %}: {{ object.posted|timesince }} ago</small>
         
-        <!-- ⭐ INFO VENDITORE CON STATS SCAMBI -->
-        {% if object.user.trade_profile %}
-          <br>
-          <small class="text-muted">
-            👤 <strong>{{ object.user.username }}</strong> - 
-            🎯 {{ object.user.trade_profile.total_trades_completed }} scambi completati - 
-            ⭐ {{ object.user.trade_profile.avg_rating|floatformat:1 }}/5.0 rating
-            <a href="{% url 'trade:user_stats' object.user.username %}" class="btn btn-xs btn-info" style="margin-left: 10px;">
-              📊 Profilo Scambi
-            </a>
-          </small>
-        {% endif %}
-      </div>
+        <!-- Sidebar azioni -->
+        <div class="col-md-4">
+            <!-- 🎮 SEZIONE AZIONI PRINCIPALE -->
+            <div class="card mb-3">
+                <div class="card-header bg-primary text-white">
+                    <h5>🎮 Ottieni questo articolo</h5>
+                </div>
+                <div class="card-body">
+                    {% if user.is_authenticated and item.user != user %}
+                        
+                        <!-- Verifica disponibilità -->
+                        {% if item.is_active %}
+                            <div class="alert alert-success">
+                                <strong>✅ Disponibile</strong>
+                            </div>
+                            
+                            <!-- 💰 PULSANTE ACQUISTA SUBITO -->
+                            {% if item.user.seller_profile and item.user.seller_profile.accepts_payments %}
+                                <a href="{% url 'payments:request_purchase' item.pk %}" 
+                                   class="btn btn-success btn-lg btn-block mb-3">
+                                    💰 Acquista Subito - {{ item.price }}€
+                                </a>
+                                <p class="text-muted small text-center">Pagamento sicuro con Stripe</p>
+                                
+                                <hr>
+                            {% else %}
+                                <!-- Link per creare/configurare il profilo venditore -->
+                                {% if user == item.user %}
+                                    <div class="alert alert-info mb-3">
+                                        <small>
+                                            Per vendere online, 
+                                            <a href="{% url 'payments:seller_setup' %}">configura le tue impostazioni di pagamento</a>
+                                        </small>
+                                    </div>
+                                {% else %}
+                                    <div class="alert alert-warning mb-3">
+                                        <small>⚠️ Questo venditore accetta solo scambi</small>
+                                    </div>
+                                {% endif %}
+                            {% endif %}
+                            
+                            <!-- 🔄 PULSANTE PROPONI SCAMBIO -->
+                            <a href="{% url 'trade:propose' item.pk %}" 
+                               class="btn btn-primary btn-lg btn-block mb-2">
+                                🔄 Proponi Scambio
+                            </a>
+                            <p class="text-muted small text-center">Scambia con un tuo articolo</p>
+                            
+                        {% else %}
+                            <!-- Annuncio non disponibile -->
+                            <div class="alert alert-warning">
+                                <strong>⏳ Non Disponibile</strong>
+                                <p class="mb-0">Questo articolo è già stato venduto o riservato.</p>
+                            </div>
+                        {% endif %}
+                        
+                    {% elif user.is_authenticated and item.user == user %}
+                        <!-- È il tuo annuncio -->
+                        <div class="alert alert-info">
+                            <strong>👤 Il Tuo Annuncio</strong>
+                            <p class="mb-2">Gestisci il tuo annuncio:</p>
+                            <a href="{% url 'django_classified:item-edit' item.pk %}" 
+                               class="btn btn-outline-primary btn-sm">✏️ Modifica</a>
+                        </div>
+                        
+                    {% else %}
+                        <!-- Utente non autenticato -->
+                        <div class="alert alert-warning">
+                            <strong>🔐 Accesso Richiesto</strong>
+                            <p class="mb-2">Per acquistare o proporre scambi devi essere registrato.</p>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <a href="{% url 'login' %}" class="btn btn-primary">Accedi</a>
+                                <a href="{% url 'registration_register' %}" class="btn btn-outline-primary">Registrati</a>
+                            </div>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- 📊 INFORMAZIONI VENDITORE -->
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h6>👤 Informazioni Venditore</h6>
+                </div>
+                <div class="card-body">
+                    <p><strong>{{ item.user.username }}</strong></p>
+                    
+                    {% if item.user.seller_profile %}
+                        {% if item.user.seller_profile.total_sales > 0 %}
+                            <div class="row text-center">
+                                <div class="col-6">
+                                    <small class="text-muted">Vendite</small><br>
+                                    <strong>{{ item.user.seller_profile.total_sales }}</strong>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted">Rating</small><br>
+                                    <strong>⭐ {{ item.user.seller_profile.average_rating|floatformat:1 }}/5</strong>
+                                </div>
+                            </div>
+                        {% else %}
+                            <p class="text-muted small">Nuovo venditore</p>
+                        {% endif %}
+                        
+                        <!-- Modalità di pagamento accettate -->
+                        <hr>
+                        <h6 class="small">💳 Pagamenti Accettati:</h6>
+                        {% if item.user.seller_profile.accepts_payments %}
+                            <span class="badge badge-success">✅ Pagamenti Online</span><br>
+                        {% else %}
+                            <span class="badge badge-secondary">❌ Solo Scambi</span><br>
+                        {% endif %}
+                        <span class="badge badge-info">🔄 Baratto</span>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- 💡 COME FUNZIONA -->
+            <div class="card">
+                <div class="card-header">
+                    <h6>💡 Come Funziona</h6>
+                </div>
+                <div class="card-body">
+                    <div class="accordion" id="howItWorks">
+                        
+                        <!-- Acquisto -->
+                        {% if item.user.seller_profile.accepts_payments %}
+                        <div class="card border-0">
+                            <div class="card-header p-0" id="headingBuy">
+                                <button class="btn btn-link text-left" type="button" 
+                                        data-toggle="collapse" data-target="#collapseBuy"
+                                        aria-expanded="false" aria-controls="collapseBuy">
+                                    💰 <strong>Acquisto Diretto</strong>
+                                </button>
+                            </div>
+                            <div id="collapseBuy" class="collapse" data-parent="#howItWorks">
+                                <div class="card-body p-2">
+                                    <ol class="small">
+                                        <li>Invia richiesta al venditore</li>
+                                        <li>Il venditore approva</li>
+                                        <li>Paghi in sicurezza con Stripe</li>
+                                        <li>Ricevi l'articolo</li>
+                                    </ol>
+                                    <div class="alert alert-light p-2">
+                                        <small>
+                                            <strong>Costo stimato:</strong><br>
+                                            Articolo: {{ item.price }}€<br>
+                                            + Commissioni: ~4.4% del prezzo<br>
+                                            <strong>Totale: prezzo + commissioni</strong><br>
+                                            <em>(Calcolo esatto durante il checkout)</em>
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                        
+                        <!-- Scambio -->
+                        <div class="card border-0">
+                            <div class="card-header p-0" id="headingTrade">
+                                <button class="btn btn-link text-left collapsed" type="button" 
+                                        data-toggle="collapse" data-target="#collapseTrade"
+                                        aria-expanded="false" aria-controls="collapseTrade">
+                                    🔄 <strong>Scambio (Baratto)</strong>
+                                </button>
+                            </div>
+                            <div id="collapseTrade" class="collapse" data-parent="#howItWorks">
+                                <div class="card-body p-2">
+                                    <ol class="small">
+                                        <li>Proponi uno dei tuoi articoli</li>
+                                        <li>Il venditore valuta lo scambio</li>
+                                        <li>Se accettato, organizzate l'incontro</li>
+                                        <li>Scambiate gli articoli</li>
+                                    </ol>
+                                    <div class="alert alert-success p-2">
+                                        <small class="mb-0">
+                                            <strong>✨ Nessuna commissione!</strong><br>
+                                            Sistema di baratto gratuito
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
-  </div>
+    
+    <!-- Sezione annunci correlati (se esistente) -->
+    <!-- ... -->
+    
+</div>
 
-  {% if object.contact_phone %}
-    <div class="row">
-      <div class="col-md-12">
-        <hr/>
-        {% if DCF.LOGIN_TO_CONTACT and not user.is_authenticated %}
-          {% trans "Please" %} <a href='{% url 'django_classified:profile' %}'>{% trans "login" %}</a>
-          {% trans "to see contact information." %}
-        {% else %}
-          {% trans "Contact phone" %}: {{ object.contact_phone }}
-        {% endif %}
-      </div>
-    </div>
-  {% endif %}
-
-  <div class="row">
-    {% for item in object.related_items %}
-      {% if forloop.first %}
-        <hr/>
-      {% endif %}
-      <div class="col-md-2">
-        {% if item.featured_image %}
-          {% thumbnail featured_image.file "70x70" crop="center" as im %}
-            <a href='{{ item.get_absolute_url }}' title="{{ item.title }}">
-              <img
-                      src='{{ im.url }}'
-                      alt='{{ item.title }}'
-                      title='{{ item.title }}'
-                      width="{{ im.width }}"
-                      height="{{ im.height }}"
-                      class="img-rounded"
-              />
-            </a>
-          {% endthumbnail %}
-          <br/>
-        {% endif %}
-        <a href='{{ item.get_absolute_url }}' title="{{ item.title }}">{{ item.title|truncatewords:3 }}</a>
-      </div>
-    {% endfor %}
-  </div>
+<!-- Script per miglioramenti UX -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Preview commissioni in tempo reale
+    const buyButton = document.querySelector('a[href*="request_purchase"]');
+    
+    if (buyButton) {
+        // Tooltip per mostrare breakdown costi
+        buyButton.setAttribute('data-toggle', 'tooltip');
+        buyButton.setAttribute('data-placement', 'top');
+        
+        const itemPrice = parseFloat('{{ item.price|floatformat:2 }}');
+        const platformFee = itemPrice * 0.03;
+        const stripeFee = (itemPrice * 0.014) + 0.25;
+        const total = itemPrice + platformFee + stripeFee;
+        
+        buyButton.setAttribute('title', 
+            `Prezzo: €${itemPrice.toFixed(2)}\n` + 
+            `+ Commissioni: €${(platformFee + stripeFee).toFixed(2)}\n` + 
+            `= Totale: €${total.toFixed(2)}`
+        );
+    }
+    
+    // Inizializza tooltip Bootstrap
+    if (typeof $!== 'undefined') {
+        $('[data-toggle="tooltip"]').tooltip();
+    }
+});
+</script>
 {% endblock %}

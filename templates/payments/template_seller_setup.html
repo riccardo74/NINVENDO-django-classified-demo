@@ -1,0 +1,176 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Impostazioni Vendite{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 800px;">
+    <h3>⚙️ Impostazioni Venditore</h3>
+    
+    <!-- Stato Configurazione -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h5>📊 Stato del Tuo Profilo Venditore</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>✅ Configurazione Base</h6>
+                            <p class="text-success mb-1">
+                                <strong>Account attivo</strong> - Puoi ricevere richieste di acquisto
+                            </p>
+                            <small class="text-muted">Profilo creato: {{ profile.created_at|date:"d/m/Y" }}</small>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>📈 Statistiche</h6>
+                            <p class="mb-1">
+                                <strong>{{ profile.total_sales }}</strong> vendite completate<br>
+                                <strong>€{{ profile.total_revenue_euros|floatformat:2 }}</strong> ricavi totali<br>
+                                <strong>⭐ {{ profile.average_rating|floatformat:1 }}/5</strong> rating medio
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Form Configurazione -->
+    <div class="card">
+        <div class="card-header">
+            <h5>🛠️ Configurazione</h5>
+        </div>
+        <div class="card-body">
+            <form method="post">
+                {% csrf_token %}
+                
+                <!-- Sistema Pagamenti -->
+                <div class="form-group">
+                    <div class="form-check">
+                        {{ form.accepts_payments }}
+                        <label class="form-check-label" for="{{ form.accepts_payments.id_for_label }}">
+                            <strong>{{ form.accepts_payments.label }}</strong>
+                        </label>
+                    </div>
+                    <small class="form-text text-muted">{{ form.accepts_payments.help_text }}</small>
+                    {% if form.accepts_payments.errors %}
+                        <div class="text-danger">{{ form.accepts_payments.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <div class="form-group">
+                    <div class="form-check">
+                        {{ form.auto_accept_payments }}
+                        <label class="form-check-label" for="{{ form.auto_accept_payments.id_for_label }}">
+                            <strong>{{ form.auto_accept_payments.label }}</strong>
+                        </label>
+                    </div>
+                    <small class="form-text text-muted">{{ form.auto_accept_payments.help_text }}</small>
+                    {% if form.auto_accept_payments.errors %}
+                        <div class="text-danger">{{ form.auto_accept_payments.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <!-- Informazioni Commissioni -->
+                <div class="alert alert-warning">
+                    <h6>💰 Schema Commissioni</h6>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p class="mb-1"><strong>Commissione Piattaforma:</strong></p>
+                            <p class="text-danger">3% del prezzo dell'articolo</p>
+                        </div>
+                        <div class="col-md-6">
+                            <p class="mb-1"><strong>Commissione Stripe:</strong></p>
+                            <p class="text-danger">1.4% + €0.25 per transazione</p>
+                        </div>
+                    </div>
+                    <hr>
+                    <h6>Esempio Calcolo:</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <tr>
+                                <td>Prezzo articolo</td>
+                                <td class="text-right">€50.00</td>
+                            </tr>
+                            <tr class="text-danger">
+                                <td>Commissione piattaforma (3%)</td>
+                                <td class="text-right">-€1.50</td>
+                            </tr>
+                            <tr class="text-danger">
+                                <td>Commissione Stripe (1.4% + €0.25)</td>
+                                <td class="text-right">-€0.95</td>
+                            </tr>
+                            <tr class="font-weight-bold">
+                                <td>Totale pagato dall'acquirente</td>
+                                <td class="text-right">€52.45</td>
+                            </tr>
+                            <tr class="text-success font-weight-bold">
+                                <td>Tu ricevi</td>
+                                <td class="text-right">€50.00</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <small class="text-muted">
+                        Le commissioni sono a carico dell'acquirente e vengono aggiunte al prezzo dell'articolo
+                    </small>
+                </div>
+
+                <!-- Come Funziona -->
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6>❓ Come Funziona il Sistema di Pagamenti</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>1. 📝 Richiesta di Acquisto</h6>
+                                <p class="small text-muted">L'acquirente invia una richiesta per il tuo annuncio con messaggio e dettagli di consegna</p>
+                                
+                                <h6>2. ✅ Approvazione</h6>
+                                <p class="small text-muted">Tu approvi o rifiuti la richiesta (automatico se abilitato)</p>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>3. 💳 Pagamento</h6>
+                                <p class="small text-muted">L'acquirente paga con carta tramite Stripe (sicuro e crittografato)</p>
+                                
+                                <h6>4. 📦 Consegna</h6>
+                                <p class="small text-muted">Spedisci l'articolo o organizza il ritiro secondo gli accordi</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stripe Setup (Solo per info, non funzionale senza account) -->
+                <div class="alert alert-info">
+                    <h6>🔧 Configurazione Stripe</h6>
+                    <p>
+                        <strong>Stato:</strong> 
+                        {% if profile.stripe_onboarding_completed %}
+                            <span class="text-success">✅ Completata</span>
+                        {% else %}
+                            <span class="text-warning">⚠️ Non configurata</span>
+                        {% endif %}
+                    </p>
+                    {% if not profile.stripe_onboarding_completed %}
+                        <p class="mb-2">Per ricevere pagamenti devi completare la configurazione Stripe:</p>
+                        <button type="button" class="btn btn-warning" disabled>
+                            🔗 Completa Configurazione Stripe (Demo Mode)
+                        </button>
+                        <br><small class="text-muted">In modalità demo - sarà attivato quando avrai un account Stripe reale</small>
+                    {% endif %}
+                </div>
+
+                <!-- Pulsanti Azione -->
+                <div class="text-center">
+                    <button type="submit" class="btn btn-success btn-lg">
+                        💾 Salva Configurazione
+                    </button>
+                    <a href="{% url 'django_classified:index' %}" class="btn btn-secondary btn-lg ml-2">
+                        🏠 Torna alla Home
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div

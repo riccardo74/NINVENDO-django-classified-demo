@@ -5,6 +5,8 @@ from django.views.generic import TemplateView
 from django.conf.urls.static import static
 from django.conf import settings
 
+
+
 urlpatterns = [
     re_path('', include('django_classified.urls', namespace='django_classified')),
     re_path('social/', include('social_django.urls', namespace='social')),
@@ -43,6 +45,9 @@ urlpatterns = [
 
     # Modulo "baratto"
     path('trade/', include('trade.urls', namespace='trade')),
+
+    # ⭐ NUOVO MODULO PAGAMENTI
+    path('payments/', include('payments.urls', namespace='payments')),  # <-- Aggiungi questa riga
 ]
 
 

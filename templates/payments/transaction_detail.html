@@ -1,0 +1,260 @@
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Transazione #{{ transaction.uuid.hex|slice:":8" }}{% endblock %}
+
+{% block body %}
+<div class="container">
+    <div class="row">
+        <div class="col-md-12">
+            <h3>💳 Dettagli Transazione #{{ transaction.uuid.hex|slice:":8" }}</h3>
+            
+            <!-- Status della transazione -->
+            <div class="alert 
+                {% if transaction.status == 'pending' %}alert-warning
+                {% elif transaction.status == 'processing' %}alert-info
+                {% elif transaction.status == 'succeeded' %}alert-success
+                {% elif transaction.status == 'failed' %}alert-danger
+                {% elif transaction.status == 'cancelled' %}alert-secondary
+                {% elif transaction.status == 'refunded' %}alert-warning
+                {% endif %}">
+                <div class="row">
+                    <div class="col-md-8">
+                        <h4>
+                            {% if transaction.status == 'pending' %}⏳ In Attesa
+                            {% elif transaction.status == 'processing' %}🔄 In Elaborazione
+                            {% elif transaction.status == 'succeeded' %}✅ Completata
+                            {% elif transaction.status == 'failed' %}❌ Fallita
+                            {% elif transaction.status == 'cancelled' %}🚫 Annullata
+                            {% elif transaction.status == 'refunded' %}💸 Rimborsata
+                            {% endif %}
+                        </h4>
+                        <p class="mb-0">{{ transaction.get_status_display }}</p>
+                    </div>
+                    <div class="col-md-4 text-right">
+                        <p class="mb-1"><strong>Creata:</strong> {{ transaction.created_at|date:"d/m/Y H:i" }}</p>
+                        {% if transaction.completed_at %}
+                            <p class="mb-0"><strong>Completata:</strong> {{ transaction.completed_at|date:"d/m/Y H:i" }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="row">
+                <!-- Dettagli transazione -->
+                <div class="col-md-8">
+                    <!-- Informazioni articolo -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h5>🎮 Articolo Acquistato</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    {% if transaction.item.image_set.first %}
+                                        <img src="{{ transaction.item.image_set.first.file.url }}" 
+                                             alt="{{ transaction.item.title }}" 
+                                             class="img-fluid rounded">
+                                    {% else %}
+                                        <div class="bg-light p-3 text-center rounded">
+                                            <span class="text-muted">Nessuna immagine</span>
+                                        </div>
+                                    {% endif %}
+                                </div>
+                                <div class="col-md-9">
+                                    <h6>{{ transaction.item.title }}</h6>
+                                    <p class="text-muted">{{ transaction.item.description|truncatewords:20 }}</p>
+                                    <p>
+                                        <a href="{{ transaction.item.get_absolute_url }}" 
+                                           class="btn btn-outline-primary btn-sm">
+                                            👁️ Vedi Annuncio
+                                        </a>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Informazioni partecipanti -->
+                    <div class="row">
+                        <!-- Acquirente -->
+                        <div class="col-md-6">
+                            <div class="card mb-3 {% if is_buyer %}border-primary{% endif %}">
+                                <div class="card-header {% if is_buyer %}bg-primary text-white{% endif %}">
+                                    <h6>🛒 Acquirente</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>{{ transaction.buyer.username }}</strong>
+                                        {% if is_buyer %}<span class="badge badge-primary ml-2">Tu</span>{% endif %}
+                                    </p>
+                                    <p>📧 {{ transaction.buyer_email }}</p>
+                                    {% if transaction.buyer_name %}
+                                        <p>👤 {{ transaction.buyer_name }}</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Venditore -->
+                        <div class="col-md-6">
+                            <div class="card mb-3 {% if is_seller %}border-success{% endif %}">
+                                <div class="card-header {% if is_seller %}bg-success text-white{% endif %}">
+                                    <h6>🏪 Venditore</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>{{ transaction.seller.username }}</strong>
+                                        {% if is_seller %}<span class="badge badge-success ml-2">Tu</span>{% endif %}
+                                    </p>
+                                    {% if transaction.seller.seller_profile %}
+                                        <p>📊 {{ transaction.seller.seller_profile.total_sales }} vendite</p>
+                                        <p>⭐ {{ transaction.seller.seller_profile.average_rating|floatformat:1 }}/5</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Indirizzo di spedizione -->
+                    {% if transaction.shipping_address %}
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>📍 Indirizzo di Spedizione</h6>
+                        </div>
+                        <div class="card-body">
+                            <address>{{ transaction.shipping_address|linebreaks }}</address>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Note -->
+                    {% if transaction.notes %}
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>📝 Note</h6>
+                        </div>
+                        <div class="card-body">
+                            {{ transaction.notes|linebreaks }}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <!-- Sidebar - Importi e azioni -->
+                <div class="col-md-4">
+                    <!-- Riepilogo importi -->
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>💰 Riepilogo Importi</h6>
+                        </div>
+                        <div class="card-body">
+                            <table class="table table-sm">
+                                <tbody>
+                                    <tr>
+                                        <td>Prezzo articolo:</td>
+                                        <td class="text-right"><strong>€{{ transaction.item_price_euros }}</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Commissione piattaforma:</td>
+                                        <td class="text-right">€{{ transaction.platform_fee_euros }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Commissione Stripe:</td>
+                                        <td class="text-right">€{{ transaction.stripe_fee_euros }}</td>
+                                    </tr>
+                                    <tr class="table-success">
+                                        <td><strong>Totale pagato:</strong></td>
+                                        <td class="text-right"><strong>€{{ transaction.total_amount_euros }}</strong></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            
+                            {% if is_seller %}
+                                <div class="alert alert-info p-2">
+                                    <small>
+                                        <strong>💰 Il tuo ricavo:</strong><br>
+                                        €{{ transaction.item_price_euros }}
+                                        <br><em>(commissioni detratte automaticamente)</em>
+                                    </small>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <!-- Azioni disponibili -->
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>⚡ Azioni</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if transaction.status == 'succeeded' %}
+                                <!-- Transazione completata -->
+                                <div class="alert alert-success p-2 mb-3">
+                                    <small><strong>✅ Pagamento completato con successo!</strong></small>
+                                </div>
+                                
+                                {% if is_buyer %}
+                                    <p><small>Il venditore è stato notificato del pagamento.</small></p>
+                                {% elif is_seller %}
+                                    <p><small>Organizza la consegna con l'acquirente.</small></p>
+                                {% endif %}
+                                
+                            {% elif transaction.status == 'pending' or transaction.status == 'processing' %}
+                                <!-- In attesa/elaborazione -->
+                                <div class="alert alert-warning p-2 mb-3">
+                                    <small><strong>⏳ Pagamento in elaborazione...</strong></small>
+                                </div>
+                                <p><small>La transazione verrà completata a breve.</small></p>
+                                
+                            {% elif transaction.status == 'failed' %}
+                                <!-- Fallita -->
+                                <div class="alert alert-danger p-2 mb-3">
+                                    <small><strong>❌ Pagamento fallito</strong></small>
+                                </div>
+                                {% if is_buyer %}
+                                    <p><small>Puoi riprovare o contattare il supporto.</small></p>
+                                {% endif %}
+                            {% endif %}
+                            
+                            <!-- Link alle cronologie -->
+                            {% if is_buyer %}
+                                <a href="{% url 'payments:purchase_history' %}" 
+                                   class="btn btn-outline-primary btn-sm btn-block">
+                                    📋 I Miei Acquisti
+                                </a>
+                            {% elif is_seller %}
+                                <a href="{% url 'payments:sales_history' %}" 
+                                   class="btn btn-outline-success btn-sm btn-block">
+                                    📋 Le Mie Vendite
+                                </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <!-- Link Stripe -->
+                    {% if transaction.stripe_payment_intent_id and is_seller %}
+                    <div class="card">
+                        <div class="card-body text-center">
+                            <small class="text-muted">
+                                ID Stripe: {{ transaction.stripe_payment_intent_id|slice:":20" }}...
+                            </small>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Auto-refresh per transazioni in corso -->
+{% if transaction.status == 'pending' or transaction.status == 'processing' %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Refresh ogni 30 secondi per transazioni in corso
+    setTimeout(function() {
+        window.location.reload();
+    }, 30000);
+});
+</script>
+{% endif %}
+{% endblock %}
