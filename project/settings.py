@@ -17,6 +17,8 @@ env.read_env(str(os.path.join(BASE_DIR, ".env")))
 DEBUG = env('DEBUG')
 SECRET_KEY = env('SECRET_KEY')
 
+USE_CLOUDINARY_IN_DEV = env.bool('USE_CLOUDINARY_IN_DEV', default=False)
+
 ADMINS = (
     ('Demo Classified Admin', os.environ.get('ADMIN_EMAIL', 'admin@example.com')),
 )
@@ -154,22 +156,26 @@ STATICFILES_DIRS = (
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB max per immagine
 ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
 
-# Configurazione Storage - MANTENIAMO LA LOGICA ORIGINALE
-# Usa Cloudinary per i MEDIA (file caricati dagli utenti) SOLO SE CONFIGURATO
-if not DEBUG and (CLOUDINARY_STORAGE['CLOUD_NAME'] != 'your_cloud_name'):
-    # PRODUZIONE: Cloudinary per media files se configurato
-    DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
-else:
-    # SVILUPPO O CLOUDINARY NON CONFIGURATO: Filesystem locale
-    DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"
+# Configurazione Storage - logica: usa Cloudinary se credenziali valide
+# e (produzione) oppure (sviluppo con override esplicito).
+def _cloudinary_ready(cfg: dict) -> bool:
+    return (
+        cfg.get('CLOUD_NAME') not in ('', 'your_cloud_name', None) and
+        cfg.get('API_KEY')    not in ('', 'your_api_key', None) and
+        cfg.get('API_SECRET') not in ('', 'your_api_secret', None)
+    )
+
+USE_CLOUDINARY = _cloudinary_ready(CLOUDINARY_STORAGE) and (not DEBUG or USE_CLOUDINARY_IN_DEV)
+
+DEFAULT_FILE_STORAGE = (
+    "cloudinary_storage.storage.MediaCloudinaryStorage"
+    if USE_CLOUDINARY else
+    "django.core.files.storage.FileSystemStorage"
+)
 
 STORAGES = {
-    "default": {
-        "BACKEND": DEFAULT_FILE_STORAGE,
-    },
-    "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
-    },
+    "default": { "BACKEND": DEFAULT_FILE_STORAGE },
+    "staticfiles": { "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage" },
 }
 
 MIDDLEWARE = (

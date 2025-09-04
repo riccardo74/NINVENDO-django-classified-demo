@@ -1,7 +1,7 @@
 {% extends "django_classified/_base.html" %}
-{% load i18n %}
+{% load static i18n %}
 {% comment %}⭐ CARICA CLOUDINARY TAGS SE DISPONIBILI{% endcomment %}
-{% load cloudinary_tags %}
+{% load cloudinary %}
 
 {% block title %}{{ item.title }} - {{ item.price }}€{% endblock %}
 
@@ -12,8 +12,9 @@
     <meta property="og:description" content="{{ item.description|truncatewords:30|striptags }}" />
     {% comment %}⭐ USA CLOUDINARY PER IMMAGINI SOCIAL SE DISPONIBILE{% endcomment %}
     {% if item.image %}
-        {% if CLOUDINARY_CONFIGURED %}
-            <meta property="og:image" content="{% cloudinary_share_image item.image 'large' %}" />
+        {% if USE_CLOUDINARY %}
+            {% cloudinary item.image width=1200 height=630 crop="fill" format="auto" quality="auto:best" as og_image %}
+            <meta property="og:image" content="{{ og_image.url }}" />
         {% else %}
             <meta property="og:image" content="{{ request.build_absolute_uri }}{{ item.image.url }}" />
         {% endif %}
@@ -44,9 +45,11 @@
                     {% for image in item.image_set.all %}
                         <div class="col-md-4 mb-2">
                             {% comment %}⭐ USA CLOUDINARY SE CONFIGURATO, ALTRIMENTI FALLBACK{% endcomment %}
-                            {% if CLOUDINARY_CONFIGURED %}
-                                <a href="{% cloudinary_url image.file 'large' %}" data-lightbox="gallery" data-title="Immagine {{ forloop.counter }}">
-                                    {% cloudinary_img image.file item.title "img-fluid rounded shadow-sm" "medium" %}
+                            {% if USE_CLOUDINARY %}
+                                {% cloudinary image.file width=800 height=600 crop="fit" format="auto" quality="auto:best" as large_image %}
+                                {% cloudinary image.file width=400 height=300 crop="fill" format="auto" quality="auto:good" as medium_image %}
+                                <a href="{{ large_image.url }}" data-lightbox="gallery" data-title="Immagine {{ forloop.counter }}">
+                                    <img src="{{ medium_image.url }}" alt="{{ item.title }}" class="img-fluid rounded shadow-sm" loading="lazy">
                                 </a>
                             {% else %}
                                 <a href="{{ image.file.url }}" data-lightbox="gallery">
@@ -60,9 +63,10 @@
             {% elif item.image %}
                 <!-- Immagine singola principale -->
                 <div class="main-image-container mb-4">
-                    {% if CLOUDINARY_CONFIGURED %}
-                        <a href="{% cloudinary_url item.image 'large' %}" data-lightbox="main-image">
-                            {% cloudinary_img item.image item.title "img-fluid rounded shadow-lg" "large" %}
+                    {% if USE_CLOUDINARY %}
+                        {% cloudinary item.image width=800 height=600 crop="fit" format="auto" quality="auto:best" as large_image %}
+                        <a href="{{ large_image.url }}" data-lightbox="main-image">
+                            <img src="{{ large_image.url }}" alt="{{ item.title }}" class="img-fluid rounded shadow-lg" loading="lazy">
                         </a>
                     {% else %}
                         <a href="{{ item.image.url }}" data-lightbox="main-image">
@@ -183,7 +187,7 @@
                     {% else %}
                         <!-- Utente non autenticato -->
                         <div class="alert alert-warning">
-                            <strong>🔐 Accesso Richiesto</strong>
+                            <strong>🔒 Accesso Richiesto</strong>
                             <p class="mb-2">Per acquistare o proporre scambi devi essere registrato.</p>
                             <div class="btn-group btn-group-sm" role="group">
                                 <a href="{% url 'login' %}" class="btn btn-primary">Accedi</a>
@@ -357,11 +361,12 @@
                     </div>
                     <div class="card-body">
                         <small class="text-muted">
-                            Status: {% if CLOUDINARY_CONFIGURED %}✅ Configurato{% else %}❌ Non configurato{% endif %}<br>
+                            Status: {% if USE_CLOUDINARY %}✅ Configurato{% else %}❌ Non configurato{% endif %}<br>
                             {% if item.image %}
                                 Original: {{ item.image.url }}<br>
-                                {% if CLOUDINARY_CONFIGURED %}
-                                    Cloudinary: {% cloudinary_url item.image 'medium' %}
+                                {% if USE_CLOUDINARY %}
+                                    {% cloudinary item.image width=400 height=300 crop="fill" format="auto" quality="auto:good" as debug_image %}
+                                    Cloudinary: {{ debug_image.url }}
                                 {% endif %}
                             {% endif %}
                         </small>
@@ -400,20 +405,160 @@
 
 <!-- CSS Styling -->
 <style>
+    /* ========== CONTROLLO DIMENSIONI IMMAGINI RIGIDO ========== */
+    
+    /* IMPORTANTE: Forza contenimento delle immagini nel layout Bootstrap */
+    .col-md-8 {
+        overflow: hidden; /* Previene debordamento da colonna principale */
+    }
+    
+    /* Container principale immagine - dimensione massima forzata */
     .main-image-container {
         position: relative;
         overflow: hidden;
         border-radius: 0.5rem;
+        max-width: 100%;
+        margin: 0 auto;
+        /* Larghezza massima assoluta per prevenire debordamento */
+        width: 100%;
+        box-sizing: border-box;
     }
     
-    .main-image-container img,
-    .item-image-container img {
+    /* Wrapper per immagine singola principale */
+    .main-image-wrapper {
+        position: relative;
+        width: 100%;
+        max-width: 100%;
+        height: 0;
+        padding-bottom: 60%; /* Ratio 5:3 più contenuto */
+        overflow: hidden;
+        border-radius: 0.5rem;
+        background-color: #f8f9fa;
+        box-sizing: border-box;
+    }
+    
+    /* Immagine principale - controllo dimensioni assoluto */
+    .main-product-image {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: cover;
+        object-position: center;
         transition: transform 0.3s ease;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        /* Previeni qualsiasi debordamento */
+        display: block;
+        box-sizing: border-box;
     }
     
-    .main-image-container:hover img,
-    .item-image-container:hover img {
-        transform: scale(1.05);
+    /* Wrapper per immagini in galleria */
+    .image-wrapper {
+        position: relative;
+        width: 100%;
+        max-width: 100%;
+        height: 0;
+        padding-bottom: 75%; /* Ratio 4:3 per uniformità galleria */
+        overflow: hidden;
+        border-radius: 0.5rem;
+        background-color: #f8f9fa;
+        margin-bottom: 15px;
+        box-sizing: border-box;
+    }
+    
+    /* Immagini della galleria */
+    .product-image {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: cover;
+        object-position: center;
+        transition: transform 0.3s ease;
+        border-radius: 0.5rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        display: block;
+        box-sizing: border-box;
+    }
+    
+    /* Effetti hover più contenuti */
+    .main-image-wrapper:hover .main-product-image,
+    .image-wrapper:hover .product-image {
+        transform: scale(1.02); /* Ridotto per evitare debordamenti */
+    }
+    
+    /* Controllo aggiuntivo per tutte le immagini nel template */
+    .main-image-container img,
+    .image-wrapper img,
+    .main-image-wrapper img {
+        max-width: 100% !important;
+        height: auto !important;
+        display: block !important;
+        box-sizing: border-box !important;
+    }
+    
+    /* Row galleria - controllo overflow */
+    .row.mb-4 {
+        margin-left: -15px;
+        margin-right: -15px;
+        overflow: hidden;
+    }
+    
+    /* Colonne galleria con padding controllato */
+    .row.mb-4 > .col-md-4 {
+        padding-left: 15px;
+        padding-right: 15px;
+        box-sizing: border-box;
+    }
+    
+    /* Responsive migliorato */
+    @media (max-width: 992px) {
+        .main-image-wrapper {
+            padding-bottom: 65%;
+        }
+    }
+    
+    @media (max-width: 768px) {
+        .main-image-wrapper {
+            padding-bottom: 70%; 
+        }
+        
+        .image-wrapper {
+            padding-bottom: 80%;
+        }
+        
+        .main-product-image,
+        .product-image {
+            border-radius: 0.25rem;
+        }
+        
+        /* Margini ridotti su mobile */
+        .row.mb-4 {
+            margin-left: -10px;
+            margin-right: -10px;
+        }
+        
+        .row.mb-4 > .col-md-4 {
+            padding-left: 10px;
+            padding-right: 10px;
+        }
+    }
+    
+    @media (max-width: 576px) {
+        .main-image-wrapper {
+            padding-bottom: 75%;
+        }
+        
+        .image-wrapper {
+            padding-bottom: 85%;
+        }
     }
     
     .seller-profile .avatar-circle {
@@ -522,19 +667,19 @@ function showContactModal() {
 
 function shareOnFacebook() {
     const url = encodeURIComponent(window.location.href);
-    const text = encodeURIComponent('{{ item.title|escapejs }} - {{ item.price }}€ su {{ DCF_SITE_NAME }}');
+    const text = encodeURIComponent('{{ item.title|escapejs }} - {{ item.price }}€ su {{ DCF.SITE_NAME }}');
     window.open(`https://www.facebook.com/sharer/sharer.php?u=${url}&quote=${text}`, '_blank', 'width=600,height=400');
 }
 
 function shareOnTwitter() {
     const url = encodeURIComponent(window.location.href);
-    const text = encodeURIComponent(`{{ item.title|escapejs }} - {{ item.price }}€ su {{ DCF_SITE_NAME }}`);
+    const text = encodeURIComponent(`{{ item.title|escapejs }} - {{ item.price }}€ su {{ DCF.SITE_NAME }}`);
     window.open(`https://twitter.com/intent/tweet?url=${url}&text=${text}`, '_blank', 'width=600,height=400');
 }
 
 function shareOnWhatsApp() {
     const url = encodeURIComponent(window.location.href);
-    const text = encodeURIComponent(`{{ item.title|escapejs }} - {{ item.price }}€ su {{ DCF_SITE_NAME }}: ${window.location.href}`);
+    const text = encodeURIComponent(`{{ item.title|escapejs }} - {{ item.price }}€ su {{ DCF.SITE_NAME }}: ${window.location.href}`);
     
     // Rileva se è mobile o desktop
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);

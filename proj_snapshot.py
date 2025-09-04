@@ -1,108 +1,115 @@
-# snapshot_django.py — Create a concise CONTEXT.md of your Django project
-# (+ optional Git history), with targeted capture for 'trade' app, messaging,
-# and user/profile pieces needed for in-app chat. Tailored for your project
-# where the marketplace app is named 'trade' (not 'market').
-
-#python proj_snapshot.py --templates all --templates-max-file-lines 400
-
-#python proj_snapshot.py --templates interesting
-
+#!/usr/bin/env python3
+# proj_snapshot.py — Crea un CONTEXT.md conciso del progetto Django
+# con opzionale storia Git, snapshot template, estratti file chiave,
+# albero directory e (NOVITÀ) sezione "Recently Changed Files".
+#
+# Esempi:
+#   python proj_snapshot.py --templates interesting
+#   python proj_snapshot.py --templates all --templates-max-file-lines 400
+#   python proj_snapshot.py --templates all --recent-hours 6
+#   python proj_snapshot.py --recent-hours 0  # disattiva "recenti"
 
 from __future__ import annotations
-import os, re, sys, argparse, textwrap, pathlib, subprocess, shutil
-from typing import List, Literal
+import os
+import re
+import sys
+import argparse
+import textwrap
+import pathlib
+import subprocess
+import shutil
+from datetime import datetime, timedelta
+from typing import List, Literal, Iterable
 
-# ---------- Configuration ----------
+# ---------- Configurazione di base ----------
 
 DEFAULT_OUT_DIR = "out"
-DEFAULT_MAX_LINES = 4000
+DEFAULT_MAX_LINES = 5000
 DEFAULT_MAX_FILE_LINES = 300
 DEFAULT_HTML_MAX_FILE_LINES = 300
 DEFAULT_GIT_MAX = 50
+RECENT_MAX_FILES = 100  # tetto di sicurezza per la sezione "recenti"
 
-EXCLUDE_DIRS = {
-    ".git", ".hg", ".svn", ".vscode", ".idea", "__pycache__", ".pytest_cache",
-    "node_modules", "static", "media", "dist", "build", ".mypy_cache",
-    ".venv", "venv", ".ruff_cache", ".tox", ".coverage", "site-packages",
-    "migrations",
+# Directory escluse dal walk del progetto
+EXCLUDED_DIRS = {
+    ".git", ".hg", ".svn", ".idea", ".vscode", "__pycache__",
+    "node_modules", "dist", "build", "staticfiles", "media",
+    ".venv", "venv", "env", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    ".tox", ".coverage", "coverage", "htmlcov", "site-packages",
+    "migrations"  # di solito poco utili nello snapshot
 }
 
-# Filenames to include ovunque
-WANTED_FILENAMES = {
-    "manage.py",
-    "requirements.txt", "requirements.in", "poetry.lock", "Pipfile", "Pipfile.lock",
-    "pyproject.toml",
-    "render.yaml", "Procfile", "Dockerfile",
-    "README.md", "README.rst", "README.txt",
-}
-
-# Suffix “code/text” che vale la pena incorporare
-CODE_SUFFIXES = {
-    ".py", ".html", ".txt", ".yaml", ".yml", ".toml", ".lock",
-    ".js", ".ts", ".css"
-}
-
-# File app-level che vogliamo sempre
+# File di app considerati "core"
 APP_CODE_FILES = {
     "models.py", "views.py", "urls.py", "forms.py", "admin.py",
-    "serializers.py", "apps.py", "signals.py"
+    "serializers.py", "apps.py", "signals.py", "permissions.py",
+    "tasks.py", "consumers.py", "selectors.py", "services.py"
 }
 
-# App di interesse
-PRIMARY_APP_NAMES = {"trade","payments"}  # marketplace app
+# App "di interesse" (adatta ai tuoi nomi reali)
+PRIMARY_APP_NAMES = {"trade", "payments"}
 MSG_APP_NAMES = {"messaging", "chat", "inbox"}
 USER_APP_NAMES = {"users", "accounts", "profiles"}
 
-# Parole chiave template (manteniamo, ma ora c'è una modalità "all")
+TemplatesMode = Literal["all", "interesting", "none"]
+
+# Parole chiave per "templates interesting"
 TEMPLATE_KEYWORDS = (
-    "login", "password_reset", "registration", "email_sent", "_base",
-    "base", "trade", "account", "signup", "logout", "profile",
+    "login", "password_reset", "registration", "email_sent", "_base", "base",
+    "trade", "account", "signup", "logout", "profile",
     "conversation", "message", "chat", "inbox"
 )
 
-TemplatesMode = Literal["all", "interesting", "none"]
-
-# ---------- Redaction ----------
+# ---------- Redaction credenziali & segreti ----------
 
 REDACTIONS = [
+    # Django SECRET_KEY = '...'
     (re.compile(r"(SECRET_KEY\s*=\s*)([\"'])(?P<val>.+?)(\2)"), r"\1'***REDACTED***'"),
+    # Social auth / variabili "URL"
     (re.compile(r"(SOCIAL_AUTH_[A-Z0-9_]+?\s*=\s*)([\"']?)(?P<val>[^\"'\n]+)([\"']?)"), r"\1'***REDACTED***'"),
-    (re.compile(r"os\.environ\.get\(\s*([\"'][A-Z0-9_]+[\"'])\s*,\s*([\"'])(?P<val>.+?)(\2)\s*\)"), r"os.environ.get(\1, '***REDACTED***')"),
+    # os.environ.get("FOO", "...") → redazione del default
+    (re.compile(r"os\.environ\.get\(\s*([\"'][A-Z0-9_]+[\"'])\s*,\s*([\"'])(?P<val>.+?)(\2)\s*\)"),
+     r"os.environ.get(\1, '***REDACTED***')"),
+    # DATABASE_URL / EMAIL_URL = '...'
     (re.compile(r"(DATABASE_URL|EMAIL_URL)\s*=\s*([\"'])(?P<val>.+?)(\2)"), r"\1='***REDACTED***'"),
+    # qualsiasi PASSWORD = '...'
     (re.compile(r"(?i)(PASSWORD\s*=\s*)([\"'])(?P<val>.+?)(\2)"), r"\1'***REDACTED***'"),
+    # Cloudinary URL
+    (re.compile(r"(CLOUDINARY_URL\s*=\s*)([\"'])(?P<val>.+?)(\2)"), r"\1'***REDACTED***'"),
 ]
 
 def redact(text: str) -> str:
-    for pattern, repl in REDACTIONS:
-        text = pattern.sub(repl, text)
+    for pat, repl in REDACTIONS:
+        text = pat.sub(repl, text)
     return text
 
-# ---------- Helpers ----------
+# ---------- Utility di identificazione file ----------
 
 def is_excluded_dir(rel_path: pathlib.Path) -> bool:
-    return any(part in EXCLUDE_DIRS for part in rel_path.parts)
+    """
+    Ritorna True se una delle parti della path è in EXCLUDED_DIRS.
+    """
+    for part in rel_path.parts:
+        if part in EXCLUDED_DIRS:
+            return True
+    return False
 
-def looks_like_project_settings(path: pathlib.Path) -> bool:
-    return path.name == "settings.py"
-
-def looks_like_project_urls(path: pathlib.Path) -> bool:
-    # keep project urls, but we also include app urls via APP_CODE_FILES
-    return path.name == "urls.py" and path.parent.name not in {"tests"}
-
-def is_wanted_misc(path: pathlib.Path) -> bool:
-    return path.name in WANTED_FILENAMES
+def is_template(path: pathlib.Path) -> bool:
+    return path.suffix.lower() == ".html"
 
 def is_code_file(path: pathlib.Path) -> bool:
-    return path.suffix in CODE_SUFFIXES or path.name in WANTED_FILENAMES
+    if path.suffix.lower() in {".py", ".js", ".ts", ".css", ".json", ".yaml", ".yml", ".ini", ".cfg", ".toml", ".env", ".txt", ".md"}:
+        return True
+    # include anche manage.py, wsgi, asgi, settings
+    name = path.name
+    if name in {"manage.py", "wsgi.py", "asgi.py"}:
+        return True
+    return False
 
 def is_app_code_file(path: pathlib.Path) -> bool:
     return path.name in APP_CODE_FILES
 
-def is_template(path: pathlib.Path) -> bool:
-    return path.suffix == ".html"
-
 def template_is_interesting(path: pathlib.Path) -> bool:
-    """Originale: include se matcha parole chiave o è dentro templates/{trade|messaging|chat|inbox}."""
     if not is_template(path):
         return False
     name = path.name.lower()
@@ -110,126 +117,96 @@ def template_is_interesting(path: pathlib.Path) -> bool:
         return True
     parts = {p.lower() for p in path.parts}
     if "templates" in parts:
-        if {"trade","messaging","chat","inbox"} & parts:
+        if (PRIMARY_APP_NAMES | MSG_APP_NAMES | USER_APP_NAMES) & parts:
             return True
     return False
 
-def iter_files(root: pathlib.Path):
+# ---------- Walk progetto ----------
+
+def iter_files(root: pathlib.Path) -> Iterable[pathlib.Path]:
     for p in root.rglob("*"):
         if p.is_dir():
             continue
         yield p
 
 def collect_template_files(root: pathlib.Path, mode: TemplatesMode) -> List[pathlib.Path]:
-    """Raccoglie i template in base alla modalità."""
     if mode == "none":
         return []
     files: List[pathlib.Path] = []
     for p in iter_files(root):
+        rel = p.relative_to(root)
+        if is_excluded_dir(rel.parent):
+            continue
         if not is_template(p):
             continue
-        rel = p.relative_to(root)
-        if is_excluded_dir(rel.parent):
-            continue
         if mode == "all":
-            # prendi tutti gli .html sotto qualsiasi cartella 'templates'
-            if "templates" in (x.lower() for x in rel.parts):
-                files.append(p)
-        else:
-            # mode == "interesting"
+            files.append(p)
+        elif mode == "interesting":
             if template_is_interesting(p):
                 files.append(p)
-    # de-dup preservando l'ordine
-    seen = set()
-    ordered = []
-    for f in files:
-        rp = f.as_posix()
-        if rp not in seen:
-            seen.add(rp)
-            ordered.append(f)
-    return ordered
+    # Ordina per path
+    files.sort(key=lambda x: x.as_posix().lower())
+    return files
 
 def collect_candidate_files(root: pathlib.Path, templates_mode: TemplatesMode) -> List[pathlib.Path]:
-    cand: List[pathlib.Path] = []
-
-    # 1) Generic important files and project-level settings/urls
+    """
+    Raccoglie:
+    - settings.py, urls.py, asgi.py, wsgi.py, manage.py
+    - file core delle app (models/views/urls/..)
+    - altri file 'interessanti' non-HTML
+    NOTA: i template sono gestiti separatamente.
+    """
+    wanted_names = {"settings.py", "urls.py", "asgi.py", "wsgi.py", "manage.py"}
+    files: List[pathlib.Path] = []
     for p in iter_files(root):
         rel = p.relative_to(root)
         if is_excluded_dir(rel.parent):
             continue
-        if p.name == "manage.py":
-            cand.append(p)
-            continue
-        if is_wanted_misc(p):
-            cand.append(p)
-            continue
-        if looks_like_project_settings(p) or looks_like_project_urls(p):
-            cand.append(p)
-            continue
+        if is_template(p):
+            continue  # templates gestiti a parte
+        if p.name in wanted_names or is_app_code_file(p) or p.suffix.lower() in {".py", ".ini", ".cfg", ".toml", ".yaml", ".yml"}:
+            files.append(p)
+    files.sort(key=lambda x: x.as_posix().lower())
+    return files
 
-    # 2) All app code files everywhere (models/views/urls/forms/etc)
+# ---------- Sezione "recenti" ----------
+
+def _best_changed_dt(p: pathlib.Path) -> datetime:
+    try:
+        st = p.stat()
+    except Exception:
+        return datetime.fromtimestamp(0)
+    ts = getattr(st, "st_mtime", None)
+    if ts is None:
+        return datetime.fromtimestamp(0)
+    return datetime.fromtimestamp(ts)
+
+def collect_recent_files(root: pathlib.Path, hours: int) -> List[pathlib.Path]:
+    if not hours or hours <= 0:
+        return []
+    cutoff = datetime.now() - timedelta(hours=hours)
+    recent: List[pathlib.Path] = []
     for p in iter_files(root):
         rel = p.relative_to(root)
         if is_excluded_dir(rel.parent):
             continue
-        if is_app_code_file(p):
-            cand.append(p)
-
-    # 3) Templates (modalità configurabile)
-    cand += collect_template_files(root, templates_mode)
-
-    # 4) PRIORITIZE/INCLUDE: trade, messaging/chat/inbox, users/accounts/profiles (codice + template interessanti)
-    important_app_roots = set()
-    for app_name in list(PRIMARY_APP_NAMES | MSG_APP_NAMES | USER_APP_NAMES):
-        for p in root.rglob(app_name):
-            if p.is_dir() and not is_excluded_dir(p.relative_to(root)):
-                important_app_roots.add(p)
-
-    for app_root in sorted(important_app_roots):
-        for p in app_root.rglob("*"):
-            if p.is_dir():
-                continue
-            rel = p.relative_to(root)
-            if is_excluded_dir(rel.parent):
-                continue
-            if p.name in APP_CODE_FILES or (templates_mode != "none" and template_is_interesting(p)):
-                cand.append(p)
-
-    # De-duplicate preserving order
+        if not (is_code_file(p) or is_template(p)):
+            continue
+        if _best_changed_dt(p) >= cutoff:
+            recent.append(p)
+            if len(recent) >= RECENT_MAX_FILES:
+                break
+    # Dedup + ordine per path
     seen = set()
-    ordered = []
-    for f in cand:
+    ordered: List[pathlib.Path] = []
+    for f in sorted(recent, key=lambda x: x.as_posix().lower()):
         rp = f.as_posix()
         if rp not in seen:
             seen.add(rp)
             ordered.append(f)
     return ordered
 
-def make_tree(root: pathlib.Path, max_depth: int = 4) -> str:
-    lines = []
-    prefix_stack = []
-    def walk(dir_path: pathlib.Path, depth: int):
-        if depth > max_depth:
-            return
-        try:
-            entries = [e for e in sorted(dir_path.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
-                       if not (is_excluded_dir(e.relative_to(root)) or e.name.startswith("."))]
-        except Exception:
-            return
-        for i, e in enumerate(entries):
-            last = (i == len(entries) - 1)
-            branch = "└── " if last else "├── "
-            prefix = "".join(prefix_stack) + branch
-            if e.is_dir():
-                lines.append(f"{prefix}{e.name}/")
-                prefix_stack.append("    " if last else "│   ")
-                walk(e, depth + 1)
-                prefix_stack.pop()
-            else:
-                lines.append(f"{prefix}{e.name}")
-    lines.append(root.resolve().name + "/")
-    walk(root, 1)
-    return "\n".join(lines)
+# ---------- Lettura file & tree ----------
 
 def read_file_excerpt(path: pathlib.Path, max_file_lines: int) -> str:
     try:
@@ -242,29 +219,62 @@ def read_file_excerpt(path: pathlib.Path, max_file_lines: int) -> str:
     if len(lines) > max_file_lines:
         lines = lines[:max_file_lines]
         truncated = True
-    content = "\n".join(lines)
+    out = "\n".join(lines)
     if truncated:
-        content += f"\n\n<<TRUNCATED: showing first {max_file_lines} lines>>"
-    return content
+        out += f"\n\n<<TRUNCATED FILE: limited to {max_file_lines} lines>>"
+    return out
 
-def collect_git_history(root: pathlib.Path, git_max: int) -> str:
-    """Return formatted git history or empty string if not available."""
-    if shutil.which("git") is None:
+def build_tree(root: pathlib.Path) -> str:
+    """
+    Tree semplice tipo:
+    project/
+    ├── app/
+    │   ├── models.py
+    │   └── views.py
+    └── manage.py
+    """
+    lines: List[str] = []
+
+    def listdir_filtered(dir_path: pathlib.Path) -> List[pathlib.Path]:
+        try:
+            entries = [
+                e for e in sorted(dir_path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+                if not (is_excluded_dir(e.relative_to(root)) or e.name.startswith("."))
+            ]
+        except Exception:
+            return []
+        return entries
+
+    def walk(dir_path: pathlib.Path, depth: int, prefix_stack: List[str]):
+        entries = listdir_filtered(dir_path)
+        for i, e in enumerate(entries):
+            last = (i == len(entries) - 1)
+            branch = "└── " if last else "├── "
+            prefix = "".join(prefix_stack) + branch
+            if e.is_dir():
+                lines.append(f"{prefix}{e.name}/")
+                prefix_stack.append("    " if last else "│   ")
+                walk(e, depth + 1, prefix_stack)
+                prefix_stack.pop()
+            else:
+                lines.append(f"{prefix}{e.name}")
+
+    lines.append(root.resolve().name + "/")
+    walk(root, 1, [])
+    return "\n".join(lines)
+
+# ---------- Storia Git ----------
+
+def collect_git_history(root: pathlib.Path, max_commits: int) -> str:
+    git_dir = root / ".git"
+    if not git_dir.exists():
         return ""
     try:
-        subprocess.check_output(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
-                                stderr=subprocess.STDOUT)
-    except subprocess.CalledProcessError:
-        return ""
-    cmd = ["git", "-C", str(root), "log",
-           f"-n{git_max}",
-           "--pretty=format:%h | %ad | %an | %s",
-           "--date=short"]
-    try:
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
-    except subprocess.CalledProcessError:
-        return ""
-    return out.strip()
+        cmd = ["git", "-C", str(root), "log", f"-{max_commits}", "--oneline", "--decorate", "--graph", "--date=short", "--pretty=format:%h %ad %d %s"]
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
+        return out.strip()
+    except Exception as e:
+        return f"<<Unable to read git history: {e}>>"
 
 # ---------- Main ----------
 
@@ -275,40 +285,63 @@ def main():
     ap.add_argument("--max-file-lines", type=int, default=DEFAULT_MAX_FILE_LINES, help="Max lines per non-HTML file excerpt")
     ap.add_argument("--templates-max-file-lines", type=int, default=DEFAULT_HTML_MAX_FILE_LINES, help="Max lines per HTML template excerpt")
     ap.add_argument("--git-max", type=int, default=DEFAULT_GIT_MAX, help="Max number of git commits to include (0 to disable)")
-    ap.add_argument("--templates", choices=["all","interesting","none"], default="interesting",
-                    help="How to include templates: 'all' (every .html under templates/), 'interesting' (heuristic), 'none' (skip)")
+    ap.add_argument("--templates", choices=["all", "interesting", "none"], default="interesting",
+                    help="Which templates to include")
+    ap.add_argument("--recent-hours", type=int, default=3,
+                    help="Include files changed in the last N hours (0 to disable). Default: 3")
     args = ap.parse_args()
 
     root = pathlib.Path(".").resolve()
     out_dir = pathlib.Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+
     context_md = out_dir / "CONTEXT.md"
+    doc_parts: List[str] = []
 
-    files = collect_candidate_files(root, args.templates)
-
-    # Pre-split per sezione: templates vs altri
-    template_files: List[pathlib.Path] = []
-    other_files: List[pathlib.Path] = []
-    for p in files:
-        if is_template(p):
-            # includiamo solo quelli nelle cartelle 'templates' quando in modalità 'all'
-            # ma se arrivano qui da 'interesting' li teniamo uguale
-            template_files.append(p)
-        else:
-            other_files.append(p)
-
-    # Assemble document
-    doc_parts = []
-    doc_parts.append("# Project Snapshot (Django)\n")
-    doc_parts.append(f"- Root: `{root}`")
-    doc_parts.append(f"- Generated by: `snapshot_django.py`")
-    doc_parts.append(f"- Templates mode: `{args.templates}`")
+    # Header
+    doc_parts.append("# Project Snapshot\n")
+    doc_parts.append(f"_Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_\n")
     doc_parts.append("\n---\n")
 
     # Tree
-    doc_parts.append("## Project Tree (compact)\n")
-    doc_parts.append("```\n" + make_tree(root, max_depth=4) + "\n```\n")
+    doc_parts.append("## Project Tree (filtered)\n")
+    doc_parts.append("```\n" + build_tree(root) + "\n```\n")
     doc_parts.append("\n---\n")
+
+    # Raccolta file
+    template_files = collect_template_files(root, args.templates)
+    other_files = collect_candidate_files(root, args.templates)
+
+    # Sezione "Recently Changed Files"
+    recent_files = collect_recent_files(root, args.recent_hours)
+    if recent_files:
+        doc_parts.append(f"## Recently Changed Files (last {args.recent_hours}h)\n")
+        for p in recent_files:
+            rp = p.relative_to(root).as_posix()
+            doc_parts.append(f"\n### {rp}\n")
+            if is_template(p):
+                code = read_file_excerpt(p, args.templates_max_file_lines)
+                lang = "html"
+            else:
+                code = read_file_excerpt(p, args.max_file_lines)
+                # mappa estensione per il fenced code block
+                ext = p.suffix.lower()
+                lang = {
+                    ".py": "python",
+                    ".yaml": "yaml", ".yml": "yaml",
+                    ".js": "javascript",
+                    ".ts": "typescript",
+                    ".css": "css",
+                    ".json": "json",
+                    ".toml": "toml",
+                    ".ini": "",
+                    ".cfg": "",
+                    ".md": "md",
+                    ".txt": ""
+                }.get(ext, "")
+            fence = "```"
+            doc_parts.append(f"{fence}{lang}\n{code}\n{fence}\n")
+        doc_parts.append("\n---\n")
 
     # Git history
     if args.git_max and args.git_max > 0:
@@ -339,20 +372,24 @@ def main():
             doc_parts.append(f"\n### {rp}\n")
             code = read_file_excerpt(p, args.max_file_lines)
             fence = "```"
-            lang = ""
-            if p.suffix == ".py":
-                lang = "python"
-            elif p.suffix == ".yaml" or p.suffix == ".yml":
-                lang = "yaml"
-            elif p.suffix == ".js":
-                lang = "javascript"
-            elif p.suffix == ".ts":
-                lang = "typescript"
-            elif p.suffix == ".css":
-                lang = "css"
+            ext = p.suffix.lower()
+            lang = {
+                ".py": "python",
+                ".yaml": "yaml", ".yml": "yaml",
+                ".js": "javascript",
+                ".ts": "typescript",
+                ".css": "css",
+                ".json": "json",
+                ".toml": "toml",
+                ".ini": "",
+                ".cfg": "",
+                ".md": "md",
+                ".txt": ""
+            }.get(ext, "")
             doc_parts.append(f"{fence}{lang}\n{code}\n{fence}\n")
+        doc_parts.append("\n---\n")
 
-    # Trim to max total lines
+    # Ricomponi rispettando il limite totale
     full_text = "\n".join(doc_parts)
     lines = full_text.splitlines()
     if len(lines) > args.max_lines:

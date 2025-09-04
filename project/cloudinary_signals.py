@@ -262,8 +262,9 @@ def cleanup_orphaned_cloudinary_images():
         return orphaned_count
         
     except Exception as e:
-        logger.error(f"Errore durante cleanup immagini orfane: {e}")
-        return 0 signal handler Item image upload: {e}")
+        print(f"Signal handler Item image upload error: {e}")
+        return 0
+
 
 
 @receiver(post_delete, sender=Item)
@@ -294,4 +295,4 @@ def handle_item_image_delete(sender, instance, **kwargs):
                 logger.warning(f"Impossibile eliminare immagine Item {instance.pk} da Cloudinary")
                 
     except Exception as e:
-        logger.error(f"Errore
+        logger.error(f"Errore durante la cancellazione dell'immagine Item {instance.pk} da Cloudinary: {e}")

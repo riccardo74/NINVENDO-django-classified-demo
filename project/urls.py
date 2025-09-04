@@ -56,7 +56,7 @@ urlpatterns = [
 
     path('debug/cloudinary/', TemplateView.as_view(template_name='debug_simple.html'), name='debug_cloudinary'),
 ]
-]
+
 
 
 # Alla fine del file
