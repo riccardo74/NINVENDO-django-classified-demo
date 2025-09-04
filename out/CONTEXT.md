@@ -1,6 +1,6 @@
 # Project Snapshot
 
-_Generated on 2025-09-03 23:31:27_
+_Generated on 2025-09-04 21:28:12_
 
 
 ---
@@ -727,2793 +727,11 @@ NINVENDO-django-classified-demo/
 
 ---
 
-## Recently Changed Files (last 3h)
-
-
-### proj_snapshot.py
-
-```python
-#!/usr/bin/env python3
-# proj_snapshot.py — Crea un CONTEXT.md conciso del progetto Django
-# con opzionale storia Git, snapshot template, estratti file chiave,
-# albero directory e (NOVITÀ) sezione "Recently Changed Files".
-#
-# Esempi:
-#   python proj_snapshot.py --templates interesting
-#   python proj_snapshot.py --templates all --templates-max-file-lines 400
-#   python proj_snapshot.py --templates all --recent-hours 6
-#   python proj_snapshot.py --recent-hours 0  # disattiva "recenti"
-
-from __future__ import annotations
-import os
-import re
-import sys
-import argparse
-import textwrap
-import pathlib
-import subprocess
-import shutil
-from datetime import datetime, timedelta
-from typing import List, Literal, Iterable
-
-# ---------- Configurazione di base ----------
-
-DEFAULT_OUT_DIR = "out"
-DEFAULT_MAX_LINES = 5000
-DEFAULT_MAX_FILE_LINES = 300
-DEFAULT_HTML_MAX_FILE_LINES = 300
-DEFAULT_GIT_MAX = 50
-RECENT_MAX_FILES = 100  # tetto di sicurezza per la sezione "recenti"
-
-# Directory escluse dal walk del progetto
-EXCLUDED_DIRS = {
-    ".git", ".hg", ".svn", ".idea", ".vscode", "__pycache__",
-    "node_modules", "dist", "build", "staticfiles", "media",
-    ".venv", "venv", "env", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    ".tox", ".coverage", "coverage", "htmlcov", "site-packages",
-    "migrations"  # di solito poco utili nello snapshot
-}
-
-# File di app considerati "core"
-APP_CODE_FILES = {
-    "models.py", "views.py", "urls.py", "forms.py", "admin.py",
-    "serializers.py", "apps.py", "signals.py", "permissions.py",
-    "tasks.py", "consumers.py", "selectors.py", "services.py"
-}
-
-# App "di interesse" (adatta ai tuoi nomi reali)
-PRIMARY_APP_NAMES = {"trade", "payments"}
-MSG_APP_NAMES = {"messaging", "chat", "inbox"}
-USER_APP_NAMES = {"users", "accounts", "profiles"}
-
-TemplatesMode = Literal["all", "interesting", "none"]
-
-# Parole chiave per "templates interesting"
-TEMPLATE_KEYWORDS = (
-    "login", "password_reset", "registration", "email_sent", "_base", "base",
-    "trade", "account", "signup", "logout", "profile",
-    "conversation", "message", "chat", "inbox"
-)
-
-# ---------- Redaction credenziali & segreti ----------
-
-REDACTIONS = [
-    # Django SECRET_KEY = '***REDACTED***'
-    (re.compile(r"(SECRET_KEY\s*=\s*)([\"'])(?P<val>.+?)(\2)"), r"\1'***REDACTED***'"),
-    # Social auth / variabili "URL"
-    (re.compile(r"(SOCIAL_AUTH_[A-Z0-9_]+?\s*=\s*)([\"']?)(?P<val>[^\"'\n]+)([\"']?)"), r"\1'***REDACTED***'"),
-    # os.environ.get("FOO", '***REDACTED***') → redazione del default
-    (re.compile(r"os\.environ\.get\(\s*([\"'][A-Z0-9_]+[\"'])\s*,\s*([\"'])(?P<val>.+?)(\2)\s*\)"),
-     r"os.environ.get(\1, '***REDACTED***')"),
-    # DATABASE_URL / EMAIL_URL='***REDACTED***'
-    (re.compile(r"(DATABASE_URL|EMAIL_URL)\s*=\s*([\"'])(?P<val>.+?)(\2)"), r"\1='***REDACTED***'"),
-    # qualsiasi PASSWORD = '***REDACTED***'
-    (re.compile(r"(?i)(PASSWORD\s*=\s*)([\"'])(?P<val>.+?)(\2)"), r"\1'***REDACTED***'"),
-    # Cloudinary URL
-    (re.compile(r"(CLOUDINARY_URL\s*=\s*)([\"'])(?P<val>.+?)(\2)"), r"\1'***REDACTED***'"),
-]
-
-def redact(text: str) -> str:
-    for pat, repl in REDACTIONS:
-        text = pat.sub(repl, text)
-    return text
-
-# ---------- Utility di identificazione file ----------
-
-def is_excluded_dir(rel_path: pathlib.Path) -> bool:
-    """
-    Ritorna True se una delle parti della path è in EXCLUDED_DIRS.
-    """
-    for part in rel_path.parts:
-        if part in EXCLUDED_DIRS:
-            return True
-    return False
-
-def is_template(path: pathlib.Path) -> bool:
-    return path.suffix.lower() == ".html"
-
-def is_code_file(path: pathlib.Path) -> bool:
-    if path.suffix.lower() in {".py", ".js", ".ts", ".css", ".json", ".yaml", ".yml", ".ini", ".cfg", ".toml", ".env", ".txt", ".md"}:
-        return True
-    # include anche manage.py, wsgi, asgi, settings
-    name = path.name
-    if name in {"manage.py", "wsgi.py", "asgi.py"}:
-        return True
-    return False
-
-def is_app_code_file(path: pathlib.Path) -> bool:
-    return path.name in APP_CODE_FILES
-
-def template_is_interesting(path: pathlib.Path) -> bool:
-    if not is_template(path):
-        return False
-    name = path.name.lower()
-    if any(k in name for k in TEMPLATE_KEYWORDS):
-        return True
-    parts = {p.lower() for p in path.parts}
-    if "templates" in parts:
-        if (PRIMARY_APP_NAMES | MSG_APP_NAMES | USER_APP_NAMES) & parts:
-            return True
-    return False
-
-# ---------- Walk progetto ----------
-
-def iter_files(root: pathlib.Path) -> Iterable[pathlib.Path]:
-    for p in root.rglob("*"):
-        if p.is_dir():
-            continue
-        yield p
-
-def collect_template_files(root: pathlib.Path, mode: TemplatesMode) -> List[pathlib.Path]:
-    if mode == "none":
-        return []
-    files: List[pathlib.Path] = []
-    for p in iter_files(root):
-        rel = p.relative_to(root)
-        if is_excluded_dir(rel.parent):
-            continue
-        if not is_template(p):
-            continue
-        if mode == "all":
-            files.append(p)
-        elif mode == "interesting":
-            if template_is_interesting(p):
-                files.append(p)
-    # Ordina per path
-    files.sort(key=lambda x: x.as_posix().lower())
-    return files
-
-def collect_candidate_files(root: pathlib.Path, templates_mode: TemplatesMode) -> List[pathlib.Path]:
-    """
-    Raccoglie:
-    - settings.py, urls.py, asgi.py, wsgi.py, manage.py
-    - file core delle app (models/views/urls/..)
-    - altri file 'interessanti' non-HTML
-    NOTA: i template sono gestiti separatamente.
-    """
-    wanted_names = {"settings.py", "urls.py", "asgi.py", "wsgi.py", "manage.py"}
-    files: List[pathlib.Path] = []
-    for p in iter_files(root):
-        rel = p.relative_to(root)
-        if is_excluded_dir(rel.parent):
-            continue
-        if is_template(p):
-            continue  # templates gestiti a parte
-        if p.name in wanted_names or is_app_code_file(p) or p.suffix.lower() in {".py", ".ini", ".cfg", ".toml", ".yaml", ".yml"}:
-            files.append(p)
-    files.sort(key=lambda x: x.as_posix().lower())
-    return files
-
-# ---------- Sezione "recenti" ----------
-
-def _best_changed_dt(p: pathlib.Path) -> datetime:
-    try:
-        st = p.stat()
-    except Exception:
-        return datetime.fromtimestamp(0)
-    ts = getattr(st, "st_mtime", None)
-    if ts is None:
-        return datetime.fromtimestamp(0)
-    return datetime.fromtimestamp(ts)
-
-def collect_recent_files(root: pathlib.Path, hours: int) -> List[pathlib.Path]:
-    if not hours or hours <= 0:
-        return []
-    cutoff = datetime.now() - timedelta(hours=hours)
-    recent: List[pathlib.Path] = []
-    for p in iter_files(root):
-        rel = p.relative_to(root)
-        if is_excluded_dir(rel.parent):
-            continue
-        if not (is_code_file(p) or is_template(p)):
-            continue
-        if _best_changed_dt(p) >= cutoff:
-            recent.append(p)
-            if len(recent) >= RECENT_MAX_FILES:
-                break
-    # Dedup + ordine per path
-    seen = set()
-    ordered: List[pathlib.Path] = []
-    for f in sorted(recent, key=lambda x: x.as_posix().lower()):
-        rp = f.as_posix()
-        if rp not in seen:
-            seen.add(rp)
-            ordered.append(f)
-    return ordered
-
-# ---------- Lettura file & tree ----------
-
-def read_file_excerpt(path: pathlib.Path, max_file_lines: int) -> str:
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except Exception as e:
-        return f"<<unable to read: {e}>>"
-    text = redact(text)
-    lines = text.splitlines()
-    truncated = False
-    if len(lines) > max_file_lines:
-        lines = lines[:max_file_lines]
-        truncated = True
-    out = "\n".join(lines)
-    if truncated:
-        out += f"\n\n<<TRUNCATED FILE: limited to {max_file_lines} lines>>"
-    return out
-
-def build_tree(root: pathlib.Path) -> str:
-    """
-    Tree semplice tipo:
-    project/
-    ├── app/
-    │   ├── models.py
-    │   └── views.py
-    └── manage.py
-    """
-    lines: List[str] = []
-
-    def listdir_filtered(dir_path: pathlib.Path) -> List[pathlib.Path]:
-        try:
-            entries = [
-                e for e in sorted(dir_path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
-                if not (is_excluded_dir(e.relative_to(root)) or e.name.startswith("."))
-            ]
-        except Exception:
-            return []
-        return entries
-
-    def walk(dir_path: pathlib.Path, depth: int, prefix_stack: List[str]):
-        entries = listdir_filtered(dir_path)
-        for i, e in enumerate(entries):
-            last = (i == len(entries) - 1)
-            branch = "└── " if last else "├── "
-            prefix = "".join(prefix_stack) + branch
-            if e.is_dir():
-                lines.append(f"{prefix}{e.name}/")
-                prefix_stack.append("    " if last else "│   ")
-                walk(e, depth + 1, prefix_stack)
-                prefix_stack.pop()
-            else:
-                lines.append(f"{prefix}{e.name}")
-
-    lines.append(root.resolve().name + "/")
-    walk(root, 1, [])
-    return "\n".join(lines)
-
-# ---------- Storia Git ----------
-
-def collect_git_history(root: pathlib.Path, max_commits: int) -> str:
-    git_dir = root / ".git"
-    if not git_dir.exists():
-        return ""
-    try:
-        cmd = ["git", "-C", str(root), "log", f"-{max_commits}", "--oneline", "--decorate", "--graph", "--date=short", "--pretty=format:%h %ad %d %s"]
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
-        return out.strip()
-    except Exception as e:
-        return f"<<Unable to read git history: {e}>>"
-
-# ---------- Main ----------
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=DEFAULT_OUT_DIR, help="Output directory (default: out)")
-    ap.add_argument("--max-lines", type=int, default=DEFAULT_MAX_LINES, help="Max total lines in CONTEXT.md")
-    ap.add_argument("--max-file-lines", type=int, default=DEFAULT_MAX_FILE_LINES, help="Max lines per non-HTML file excerpt")
-    ap.add_argument("--templates-max-file-lines", type=int, default=DEFAULT_HTML_MAX_FILE_LINES, help="Max lines per HTML template excerpt")
-    ap.add_argument("--git-max", type=int, default=DEFAULT_GIT_MAX, help="Max number of git commits to include (0 to disable)")
-    ap.add_argument("--templates", choices=["all", "interesting", "none"], default="interesting",
-                    help="Which templates to include")
-    ap.add_argument("--recent-hours", type=int, default=3,
-                    help="Include files changed in the last N hours (0 to disable). Default: 3")
-    args = ap.parse_args()
-
-    root = pathlib.Path(".").resolve()
-    out_dir = pathlib.Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    context_md = out_dir / "CONTEXT.md"
-    doc_parts: List[str] = []
-
-
-<<TRUNCATED FILE: limited to 300 lines>>
-```
-
-
-### project/__init__.py
-
-```python
-
-default_app_config = 'project.apps.ProjectConfig'
-```
-
-
-### project/apps.py
-
-```python
-from django.apps import AppConfig
-
-
-class ProjectConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'project'
-    verbose_name = 'NINVENDO Project Core'
-    
-    def ready(self):
-        """
-        Codice da eseguire quando l'app è pronta
-        """
-        # Import dei signal handlers Cloudinary (solo in produzione)
-        from django.conf import settings
-        
-        if not getattr(settings, 'DEBUG', True):
-            try:
-                import project.cloudinary_signals
-                print("📷 Cloudinary signals registrati")
-            except ImportError as e:
-                print(f"⚠️ Impossibile registrare Cloudinary signals: {e}")
-```
-
-
-### project/cloudinary_signals.py
-
-```python
-"""
-Signal handlers per gestire automaticamente upload/eliminazione immagini su Cloudinary
-"""
-from django.db.models.signals import post_save, post_delete, pre_save
-from django.dispatch import receiver
-from django.conf import settings
-import os
-import logging
-
-# Import dei modelli che hanno immagini
-try:
-    from django_classified.models import Item, ItemImage  # Se esiste un modello ItemImage
-except ImportError:
-    # Se non esiste ItemImage, usiamo solo Item
-    from django_classified.models import Item
-    ItemImage = None
-
-from trade.models import TradeMessage  # Per le immagini nei messaggi
-
-from .cloudinary_utils import (
-    upload_image_to_cloudinary,
-    delete_cloudinary_image,
-    is_cloudinary_configured
-)
-
-logger = logging.getLogger(__name__)
-
-
-@receiver(post_save, sender=Item)
-def handle_item_image_upload(sender, instance, created, **kwargs):
-    """
-    Gestisce upload automatico dell'immagine principale quando viene salvato un Item
-    """
-    if not is_cloudinary_configured():
-        return
-    
-    # Solo in produzione (non in debug)
-    if settings.DEBUG:
-        return
-    
-    try:
-        # Se c'è un'immagine e non è ancora stata processata
-        if hasattr(instance, 'image') and instance.image:
-            # Controlla se l'immagine è stata appena caricata
-            if created or not hasattr(instance, '_cloudinary_processed'):
-                
-                # Genera public_id univoco
-                public_id = f"items/item_{instance.pk}_{instance.slug}"
-                
-                # Upload su Cloudinary
-                result = upload_image_to_cloudinary(
-                    instance.image.file,
-                    folder="items",
-                    public_id=public_id
-                )
-                
-                if result:
-                    # Marca come processato
-                    instance._cloudinary_processed = True
-                    logger.info(f"Immagine Item {instance.pk} caricata su Cloudinary: {result['public_id']}")
-                else:
-                    logger.warning(f"Fallito upload Cloudinary per Item {instance.pk}")
-                    
-    except Exception as e:
-        logger.error(f"Errore signal handler Item image delete: {e}")
-
-
-@receiver(post_save, sender=TradeMessage)
-def handle_trade_message_image_upload(sender, instance, created, **kwargs):
-    """
-    Gestisce upload automatico delle immagini nei messaggi di scambio
-    """
-    if not is_cloudinary_configured():
-        return
-    
-    if settings.DEBUG:
-        return
-    
-    try:
-        # Se c'è un'immagine e il messaggio è appena stato creato
-        if created and hasattr(instance, 'image') and instance.image:
-            
-            # Genera public_id univoco per il messaggio
-            public_id = f"trade_messages/trade_{instance.trade.pk}/msg_{instance.pk}"
-            
-            # Upload su Cloudinary
-            result = upload_image_to_cloudinary(
-                instance.image.file,
-                folder="trade_messages",
-                public_id=public_id
-            )
-            
-            if result:
-                logger.info(f"Immagine TradeMessage {instance.pk} caricata su Cloudinary: {result['public_id']}")
-            else:
-                logger.warning(f"Fallito upload Cloudinary per TradeMessage {instance.pk}")
-                
-    except Exception as e:
-        logger.error(f"Errore signal handler TradeMessage image upload: {e}")
-
-
-@receiver(post_delete, sender=TradeMessage)
-def handle_trade_message_image_delete(sender, instance, **kwargs):
-    """
-    Elimina immagine da Cloudinary quando viene eliminato un TradeMessage
-    """
-    if not is_cloudinary_configured():
-        return
-    
-    if settings.DEBUG:
-        return
-    
-    try:
-        if hasattr(instance, 'image') and instance.image:
-            # Ricostruisci public_id
-            public_id = f"ninvendo/trade_messages/trade_{instance.trade.pk}/msg_{instance.pk}"
-            
-            success = delete_cloudinary_image(public_id)
-            
-            if success:
-                logger.info(f"Immagine TradeMessage {instance.pk} eliminata da Cloudinary")
-            else:
-                logger.warning(f"Impossibile eliminare immagine TradeMessage {instance.pk} da Cloudinary")
-                
-    except Exception as e:
-        logger.error(f"Errore signal handler TradeMessage image delete: {e}")
-
-
-# Signal handler generico per modelli con immagini multiple (se necessario)
-if ItemImage:  # Se esiste un modello per immagini multiple
-    
-    @receiver(post_save, sender=ItemImage)
-    def handle_item_image_multiple_upload(sender, instance, created, **kwargs):
-        """
-        Gestisce upload di immagini multiple per un Item
-        """
-        if not is_cloudinary_configured() or settings.DEBUG:
-            return
-        
-        try:
-            if created and instance.image:
-                public_id = f"items/item_{instance.item.pk}/image_{instance.pk}"
-                
-                result = upload_image_to_cloudinary(
-                    instance.image.file,
-                    folder="items",
-                    public_id=public_id
-                )
-                
-                if result:
-                    logger.info(f"ItemImage {instance.pk} caricata su Cloudinary: {result['public_id']}")
-                
-        except Exception as e:
-            logger.error(f"Errore signal handler ItemImage upload: {e}")
-    
-    
-    @receiver(post_delete, sender=ItemImage)
-    def handle_item_image_multiple_delete(sender, instance, **kwargs):
-        """
-        Elimina immagini multiple da Cloudinary
-        """
-        if not is_cloudinary_configured() or settings.DEBUG:
-            return
-        
-        try:
-            if instance.image:
-                public_id = f"ninvendo/items/item_{instance.item.pk}/image_{instance.pk}"
-                success = delete_cloudinary_image(public_id)
-                
-                if success:
-                    logger.info(f"ItemImage {instance.pk} eliminata da Cloudinary")
-                
-        except Exception as e:
-            logger.error(f"Errore signal handler ItemImage delete: {e}")
-
-
-# Signal per ottimizzazione immagini esistenti
-@receiver(pre_save, sender=Item)
-def optimize_item_image_before_save(sender, instance, **kwargs):
-    """
-    Ottimizza immagini prima del salvataggio (solo per upload iniziali)
-    """
-    if not is_cloudinary_configured() or settings.DEBUG:
-        return
-    
-    try:
-        # Solo se è un nuovo oggetto o se l'immagine è cambiata
-        if instance.pk is None:  # Nuovo oggetto
-            if hasattr(instance, 'image') and instance.image:
-                # Qui potresti aggiungere validazioni/ottimizzazioni pre-upload
-                # Ad esempio, controllare dimensioni, formato, ecc.
-                
-                # Esempio: validazione dimensioni massime
-                if hasattr(instance.image, 'file') and instance.image.file:
-                    file_size = instance.image.file.size
-                    max_size = getattr(settings, 'MAX_UPLOAD_SIZE', 10 * 1024 * 1024)  # 10MB
-                    
-                    if file_size > max_size:
-                        raise ValueError(f"File troppo grande: {file_size/1024/1024:.1f}MB. Max: {max_size/1024/1024:.1f}MB")
-                
-                logger.debug(f"Pre-validazione immagine Item completata")
-                
-    except Exception as e:
-        logger.error(f"Errore pre-save optimization: {e}")
-        # Non bloccare il salvataggio per errori di ottimizzazione
-        pass
-
-
-def cleanup_orphaned_cloudinary_images():
-    """
-    Utility function per pulire immagini orfane su Cloudinary
-    Può essere chiamata da un comando di gestione Django
-    """
-    if not is_cloudinary_configured():
-        logger.warning("Cloudinary non configurato, cleanup saltato")
-        return
-    
-    try:
-        from .cloudinary_utils import get_folder_stats
-        import cloudinary.api
-        
-        # Ottieni tutte le immagini dalla cartella ninvendo
-        stats = get_folder_stats("ninvendo")
-        
-        if not stats:
-            return
-        
-        orphaned_count = 0
-        
-        # Controlla ogni immagine se ha un corrispondente nel database
-        for resource in stats['resources']:
-            public_id = resource['public_id']
-            
-            # Estrai informazioni dal public_id
-            if 'items/' in public_id:
-                # Controlla se l'item esiste ancora
-                try:
-                    item_id = public_id.split('item_')[1].split('_')[0]
-                    if not Item.objects.filter(pk=item_id).exists():
-                        # Item non esiste più, elimina l'immagine
-                        success = delete_cloudinary_image(public_id)
-                        if success:
-                            orphaned_count += 1
-                            logger.info(f"Eliminata immagine orfana: {public_id}")
-                except (IndexError, ValueError):
-                    # Public ID non parsabile, salta
-                    continue
-            
-            elif 'trade_messages/' in public_id:
-                # Controlla se il messaggio esiste ancora
-                try:
-                    msg_id = public_id.split('msg_')[1]
-                    if not TradeMessage.objects.filter(pk=msg_id).exists():
-                        success = delete_cloudinary_image(public_id)
-                        if success:
-                            orphaned_count += 1
-                            logger.info(f"Eliminata immagine messaggio orfana: {public_id}")
-                except (IndexError, ValueError):
-                    continue
-        
-        logger.info(f"Cleanup completato: {orphaned_count} immagini orfane eliminate")
-        return orphaned_count
-        
-    except Exception as e:
-        logger.error(f"Errore durante cleanup immagini orfane: {e}")
-        return 0 signal handler Item image upload: {e}")
-
-
-@receiver(post_delete, sender=Item)
-def handle_item_image_delete(sender, instance, **kwargs):
-    """
-    Elimina immagine da Cloudinary quando viene eliminato un Item
-    """
-    if not is_cloudinary_configured():
-        return
-    
-    if settings.DEBUG:
-        return
-    
-    try:
-        if hasattr(instance, 'image') and instance.image:
-            # Estrai public_id dall'immagine
-            if hasattr(instance.image, 'public_id'):
-                public_id = instance.image.public_id
-            else:
-                # Ricostruisci public_id dal nome file
-                public_id = f"ninvendo/items/item_{instance.pk}_{instance.slug}"
-            
-            success = delete_cloudinary_image(public_id)
-            
-            if success:
-                logger.info(f"Immagine Item {instance.pk} eliminata da Cloudinary")
-            else:
-                logger.warning(f"Impossibile eliminare immagine Item {instance.pk} da Cloudinary")
-                
-    except Exception as e:
-        logger.error(f"Errore
-```
-
-
-### project/cloudinary_utils.py
-
-```python
-"""
-Utilities per gestire Cloudinary nel progetto NINVENDO
-"""
-import os
-from django.conf import settings
-from django.utils.html import format_html
-from django.template.loader import render_to_string
-import cloudinary
-import cloudinary.uploader
-import cloudinary.api
-from cloudinary import CloudinaryImage
-import logging
-
-logger = logging.getLogger(__name__)
-
-
-def is_cloudinary_configured():
-    """Verifica se Cloudinary è configurato correttamente"""
-    try:
-        cloud_name = getattr(settings, 'CLOUDINARY_STORAGE', {}).get('CLOUD_NAME')
-        api_key = getattr(settings, 'CLOUDINARY_STORAGE', {}).get('API_KEY')
-        api_secret = getattr(settings, 'CLOUDINARY_STORAGE', {}).get('API_SECRET')
-        
-        return all([cloud_name, api_key, api_secret]) and \
-               cloud_name != 'your_cloud_name' and \
-               api_key != 'your_api_key'
-    except:
-        return False
-
-
-def get_cloudinary_url(image_field, transformation='medium'):
-    """
-    Genera URL Cloudinary per un'immagine con trasformazioni
-    
-    Args:
-        image_field: Campo immagine del modello Django
-        transformation: Nome della trasformazione (da settings.CLOUDINARY_TRANSFORMATIONS)
-    
-    Returns:
-        str: URL dell'immagine trasformata
-    """
-    if not image_field:
-        return None
-        
-    # Se non è configurato Cloudinary, usa URL normale
-    if not is_cloudinary_configured():
-        return image_field.url if hasattr(image_field, 'url') else None
-    
-    try:
-        # Estrai public_id dal percorso
-        if hasattr(image_field, 'public_id'):
-            public_id = image_field.public_id
-        elif hasattr(image_field, 'name'):
-            # Per campi FileField, estrai il public_id dal name
-            public_id = os.path.splitext(image_field.name)[0]
-        else:
-            return image_field.url if hasattr(image_field, 'url') else None
-            
-        # Ottieni parametri di trasformazione
-        transform_params = settings.CLOUDINARY_TRANSFORMATIONS.get(
-            transformation, 
-            settings.CLOUDINARY_TRANSFORMATIONS['medium']
-        )
-        
-        # Crea CloudinaryImage e genera URL
-        cloudinary_image = CloudinaryImage(public_id)
-        return cloudinary_image.build_url(**transform_params)
-        
-    except Exception as e:
-        logger.warning(f"Errore generazione URL Cloudinary: {e}")
-        return image_field.url if hasattr(image_field, 'url') else None
-
-
-def get_optimized_image_tag(image_field, alt_text="", css_class="", transformation='medium'):
-    """
-    Genera tag HTML <img> ottimizzato con srcset per responsive images
-    
-    Args:
-        image_field: Campo immagine
-        alt_text: Testo alternativo
-        css_class: Classi CSS
-        transformation: Trasformazione base
-    
-    Returns:
-        str: Tag HTML completo
-    """
-    if not image_field:
-        return format_html(
-            '<div class="no-image-placeholder {}">'
-            '<span class="text-muted">📷 Nessuna immagine</span>'
-            '</div>',
-            css_class
-        )
-    
-    try:
-        base_url = get_cloudinary_url(image_field, transformation)
-        if not base_url:
-            # Fallback per sviluppo locale
-            return format_html(
-                '<img src="{}" alt="{}" class="{}" loading="lazy">',
-                image_field.url, alt_text, css_class
-            )
-        
-        # Se Cloudinary è configurato, crea srcset responsive
-        if is_cloudinary_configured():
-            # Genera diverse risoluzioni
-            srcset_urls = []
-            base_transform = settings.CLOUDINARY_TRANSFORMATIONS.get(transformation, {})
-            base_width = base_transform.get('width', 400)
-            
-            # Crea varianti per diversi device pixel ratio
-            for dpr in [1, 1.5, 2]:
-                width = int(base_width * dpr)
-                transform_params = base_transform.copy()
-                transform_params['width'] = width
-                transform_params['dpr'] = dpr
-                
-                if hasattr(image_field, 'public_id'):
-                    public_id = image_field.public_id
-                else:
-                    public_id = os.path.splitext(image_field.name)[0]
-                
-                cloudinary_image = CloudinaryImage(public_id)
-                url = cloudinary_image.build_url(**transform_params)
-                srcset_urls.append(f"{url} {dpr}x")
-            
-            srcset = ", ".join(srcset_urls)
-            
-            return format_html(
-                '<img src="{}" srcset="{}" alt="{}" class="{}" loading="lazy">',
-                base_url, srcset, alt_text, css_class
-            )
-        else:
-            return format_html(
-                '<img src="{}" alt="{}" class="{}" loading="lazy">',
-                base_url, alt_text, css_class
-            )
-            
-    except Exception as e:
-        logger.error(f"Errore generazione tag immagine: {e}")
-        # Fallback sicuro
-        return format_html(
-            '<img src="{}" alt="{}" class="{}" loading="lazy">',
-            image_field.url if hasattr(image_field, 'url') else '',
-            alt_text, css_class
-        )
-
-
-def upload_image_to_cloudinary(image_file, folder="items", public_id=None):
-    """
-    Carica un'immagine su Cloudinary con ottimizzazioni
-    
-    Args:
-        image_file: File immagine da caricare
-        folder: Cartella di destinazione su Cloudinary
-        public_id: ID pubblico personalizzato (opzionale)
-    
-    Returns:
-        dict: Risultato upload Cloudinary
-    """
-    if not is_cloudinary_configured():
-        logger.warning("Cloudinary non configurato, upload saltato")
-        return None
-    
-    try:
-        upload_options = {
-            'folder': f"ninvendo/{folder}",
-            'use_filename': True,
-            'unique_filename': True if not public_id else False,
-            'overwrite': False,
-            'quality': 'auto:best',
-            'format': 'auto',
-            'flags': 'progressive',
-            'transformation': [
-                {'quality': 'auto:good'},
-                {'fetch_format': 'auto'}
-            ]
-        }
-        
-        if public_id:
-            upload_options['public_id'] = public_id
-        
-        result = cloudinary.uploader.upload(image_file, **upload_options)
-        
-        logger.info(f"Immagine caricata su Cloudinary: {result.get('public_id')}")
-        return result
-        
-    except Exception as e:
-        logger.error(f"Errore upload Cloudinary: {e}")
-        return None
-
-
-def delete_cloudinary_image(public_id):
-    """
-    Elimina un'immagine da Cloudinary
-    
-    Args:
-        public_id: ID pubblico dell'immagine da eliminare
-    
-    Returns:
-        bool: True se eliminata con successo
-    """
-    if not is_cloudinary_configured() or not public_id:
-        return False
-    
-    try:
-        result = cloudinary.uploader.destroy(public_id)
-        success = result.get('result') == 'ok'
-        
-        if success:
-            logger.info(f"Immagine eliminata da Cloudinary: {public_id}")
-        else:
-            logger.warning(f"Immagine non trovata su Cloudinary: {public_id}")
-        
-        return success
-        
-    except Exception as e:
-        logger.error(f"Errore eliminazione Cloudinary: {e}")
-        return False
-
-
-def get_folder_stats(folder_path="ninvendo"):
-    """
-    Ottieni statistiche su una cartella Cloudinary
-    
-    Args:
-        folder_path: Percorso della cartella
-    
-    Returns:
-        dict: Statistiche della cartella
-    """
-    if not is_cloudinary_configured():
-        return None
-    
-    try:
-        # Ottieni informazioni sulla cartella
-        result = cloudinary.api.resources(
-            type="upload",
-            prefix=folder_path,
-            max_results=500
-        )
-        
-        total_resources = result.get('total_count', 0)
-        resources = result.get('resources', [])
-        total_bytes = sum(r.get('bytes', 0) for r in resources)
-        
-        return {
-            'total_images': total_resources,
-            'total_size_mb': round(total_bytes / (1024 * 1024), 2),
-            'resources': resources
-        }
-        
-    except Exception as e:
-        logger.error(f"Errore statistiche Cloudinary: {e}")
-        return None
-
-
-# Decorator per template tags
-def cloudinary_templatetag(func):
-    """Decorator per template tags che usano Cloudinary"""
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Errore template tag Cloudinary: {e}")
-            return ""
-    return wrapper
-```
-
-
-### project/context_processors.py
-
-```python
-"""
-Context processors per NINVENDO
-Rende disponibili le configurazioni del sito in tutti i template
-"""
-
-from django.conf import settings
-
-
-def site_config(request):
-    """
-    Context processor per le configurazioni del sito
-    Uso nei template: {{ SITE_NAME }}, {{ SITE_DESCRIPTION }}, etc.
-    """
-    return {
-        'SITE_NAME': getattr(settings, 'SITE_NAME', 'NINVENDO'),
-        'SITE_DESCRIPTION': getattr(settings, 'SITE_DESCRIPTION', 'A swap and market place for nintendo lovers'),
-        'SITE_TAGLINE': getattr(settings, 'SITE_TAGLINE', 'Your Nintendo Gaming Community'),
-        'SITE_URL': getattr(settings, 'SITE_URL', 'http://127.0.0.1:8000'),
-    }
-
-
-def cloudinary_context(request):
-    """
-    Aggiunge informazioni Cloudinary disponibili in tutti i template
-    Uso nei template: {{ CLOUDINARY_CONFIGURED }}, {{ CLOUDINARY_ACTIVE }}, etc.
-    """
-    
-    # Verifica se Cloudinary è configurato
-    cloudinary_configured = (
-        hasattr(settings, 'CLOUDINARY_STORAGE') and
-        settings.CLOUDINARY_STORAGE.get('CLOUD_NAME', 'your_cloud_name') != 'your_cloud_name' and
-        settings.CLOUDINARY_STORAGE.get('API_KEY', 'your_api_key') != 'your_api_key'
-    )
-    
-    # Verifica se è attivo (basato su storage backend)
-    cloudinary_active = (
-        cloudinary_configured and 
-        getattr(settings, 'DEFAULT_FILE_STORAGE', '').endswith('MediaCloudinaryStorage')
-    )
-    
-    return {
-        'CLOUDINARY_CONFIGURED': cloudinary_configured,
-        'CLOUDINARY_ACTIVE': cloudinary_active,
-        'CLOUDINARY_TRANSFORMATIONS': getattr(settings, 'CLOUDINARY_TRANSFORMATIONS', {}),
-        'USE_CLOUDINARY_IN_DEV': getattr(settings, 'USE_CLOUDINARY_IN_DEV', False),
-        'DEBUG': settings.DEBUG,
-    }
-```
-
-
-### project/management/__init__.py
-
-```python
-
-```
-
-
-### project/management/commands/__init__.py
-
-```python
-
-```
-
-
-### project/management/commands/cloudinary_admin.py
-
-```python
-"""
-Management command per amministrare Cloudinary
-Uso: python manage.py cloudinary_admin [comando] [opzioni]
-"""
-from django.core.management.base import BaseCommand, CommandError
-from django.conf import settings
-from django.db import transaction
-import sys
-import os
-
-# Import delle utility Cloudinary
-try:
-    from project.cloudinary_utils import (
-        is_cloudinary_configured,
-        get_folder_stats,
-        delete_cloudinary_image,
-        upload_image_to_cloudinary
-    )
-    from project.cloudinary_signals import cleanup_orphaned_cloudinary_images
-except ImportError as e:
-    print(f"⚠️ Import error: {e}")
-    # Fallback imports
-    pass
-
-from django_classified.models import Item
-from trade.models import TradeMessage
-
-
-class Command(BaseCommand):
-    help = """
-    Amministra Cloudinary per NINVENDO
-    
-    Comandi disponibili:
-      status      - Mostra stato configurazione Cloudinary
-      stats       - Statistiche utilizzo storage
-      cleanup     - Rimuove immagini orfane
-      migrate     - Migra immagini esistenti su Cloudinary
-      test        - Testa configurazione con upload di prova
-      backup      - Backup URLs immagini esistenti
-    """
-    
-    def add_arguments(self, parser):
-        parser.add_argument(
-            'command',
-            type=str,
-            help='Comando da eseguire: status, stats, cleanup, migrate, test, backup'
-        )
-        
-        parser.add_argument(
-            '--force',
-            action='store_true',
-            help='Forza operazione senza conferma'
-        )
-        
-        parser.add_argument(
-            '--limit',
-            type=int,
-            default=100,
-            help='Limite oggetti da processare (default: 100)'
-        )
-        
-        parser.add_argument(
-            '--folder',
-            type=str,
-            default='ninvendo',
-            help='Cartella Cloudinary target (default: ninvendo)'
-        )
-        
-        parser.add_argument(
-            '--dry-run',
-            action='store_true',
-            help='Simula operazione senza eseguirla'
-        )
-    
-    def handle(self, *args, **options):
-        command = options['command'].lower()
-        
-        # Dispatcher dei comandi
-        command_map = {
-            'status': self.handle_status,
-            'stats': self.handle_stats,
-            'cleanup': self.handle_cleanup,
-            'migrate': self.handle_migrate,
-            'test': self.handle_test,
-            'backup': self.handle_backup,
-        }
-        
-        if command not in command_map:
-            raise CommandError(f"Comando non riconosciuto: {command}")
-        
-        try:
-            command_map[command](options)
-        except Exception as e:
-            raise CommandError(f"Errore esecuzione comando '{command}': {e}")
-    
-    def handle_status(self, options):
-        """Mostra stato configurazione Cloudinary"""
-        self.stdout.write(self.style.HTTP_INFO("=== STATUS CLOUDINARY ==="))
-        
-        # Verifica configurazione
-        configured = is_cloudinary_configured()
-        status_icon = "✅" if configured else "❌"
-        
-        self.stdout.write(f"{status_icon} Configurazione: {'OK' if configured else 'MANCANTE'}")
-        
-        if configured:
-            # Mostra dettagli configurazione (senza credenziali sensibili)
-            cloudinary_settings = getattr(settings, 'CLOUDINARY_STORAGE', {})
-            cloud_name = cloudinary_settings.get('CLOUD_NAME', 'N/A')
-            
-            self.stdout.write(f"🏷️  Cloud Name: {cloud_name}")
-            self.stdout.write(f"🔐 API Key: {'***' + cloudinary_settings.get('API_KEY', '')[-4:] if cloudinary_settings.get('API_KEY') else 'N/A'}")
-            self.stdout.write(f"🔧 Secure: {cloudinary_settings.get('SECURE', False)}")
-            
-            # Verifica storage backend
-            storage_backend = getattr(settings, 'DEFAULT_FILE_STORAGE', 'N/A')
-            self.stdout.write(f"💾 Storage Backend: {storage_backend}")
-            
-            # Debug mode
-            debug_icon = "🛠️" if settings.DEBUG else "🚀"
-            self.stdout.write(f"{debug_icon} Modalità: {'Sviluppo' if settings.DEBUG else 'Produzione'}")
-            
-        else:
-            self.stdout.write(self.style.WARNING("⚠️  Cloudinary non configurato"))
-            self.stdout.write("Imposta le variabili d'ambiente:")
-            self.stdout.write("  CLOUDINARY_CLOUD_NAME=your_cloud_name")
-            self.stdout.write("  CLOUDINARY_API_KEY=your_api_key") 
-            self.stdout.write("  CLOUDINARY_API_SECRET=your_api_secret")
-    
-    def handle_stats(self, options):
-        """Mostra statistiche utilizzo"""
-        self.stdout.write(self.style.HTTP_INFO("=== STATISTICHE CLOUDINARY ==="))
-        
-        if not is_cloudinary_configured():
-            self.stdout.write(self.style.ERROR("❌ Cloudinary non configurato"))
-            return
-        
-        folder = options['folder']
-        stats = get_folder_stats(folder)
-        
-        if not stats:
-            self.stdout.write(self.style.WARNING("⚠️ Impossibile ottenere statistiche"))
-            return
-        
-        self.stdout.write(f"📁 Cartella: {folder}")
-        self.stdout.write(f"📷 Totale immagini: {stats['total_images']}")
-        self.stdout.write(f"💾 Dimensione totale: {stats['total_size_mb']} MB")
-        
-        # Statistiche dettagliate per sottocartelle
-        subcategories = {}
-        for resource in stats['resources'][:20]:  # Primi 20 per non sovraccaricare
-            public_id = resource['public_id']
-            if '/' in public_id:
-                category = public_id.split('/')[1] if public_id.count('/') > 1 else 'root'
-                subcategories[category] = subcategories.get(category, 0) + 1
-        
-        if subcategories:
-            self.stdout.write("\n📂 Breakdown per categoria:")
-            for category, count in subcategories.items():
-                self.stdout.write(f"  {category}: {count} immagini")
-        
-        # Conta immagini nel database locale
-        items_with_images = Item.objects.exclude(image='').count()
-        trade_messages_with_images = TradeMessage.objects.exclude(image='').count()
-        
-        self.stdout.write(f"\n🗃️  Database locale:")
-        self.stdout.write(f"  Items con immagini: {items_with_images}")
-        self.stdout.write(f"  Trade messages con immagini: {trade_messages_with_images}")
-        
-        total_db_images = items_with_images + trade_messages_with_images
-        self.stdout.write(f"  Totale: {total_db_images}")
-        
-        # Differenza
-        diff = stats['total_images'] - total_db_images
-        if diff > 0:
-            self.stdout.write(self.style.WARNING(f"⚠️ Possibili {diff} immagini orfane su Cloudinary"))
-        elif diff < 0:
-            self.stdout.write(self.style.WARNING(f"⚠️ {abs(diff)} immagini non migrate su Cloudinary"))
-    
-    def handle_cleanup(self, options):
-        """Rimuove immagini orfane"""
-        self.stdout.write(self.style.HTTP_INFO("=== CLEANUP IMMAGINI ORFANE ==="))
-        
-        if not is_cloudinary_configured():
-            self.stdout.write(self.style.ERROR("❌ Cloudinary non configurato"))
-            return
-        
-        if not options['force'] and not options['dry_run']:
-            confirm = input("⚠️  Questa operazione eliminerà immagini da Cloudinary. Continuare? (y/N): ")
-            if confirm.lower() != 'y':
-                self.stdout.write("Operazione annullata.")
-                return
-        
-        if options['dry_run']:
-            self.stdout.write(self.style.WARNING("🧪 MODALITÀ DRY-RUN - Nessuna eliminazione effettuata"))
-        
-        # Esegui cleanup
-        try:
-            if options['dry_run']:
-                # Simula cleanup (implementa versione dry-run se necessario)
-                self.stdout.write("🔍 Analisi immagini orfane...")
-                # TODO: Implementa logica dry-run
-                orphaned_count = 0
-            else:
-                orphaned_count = cleanup_orphaned_cloudinary_images()
-            
-            if orphaned_count > 0:
-                self.stdout.write(self.style.SUCCESS(f"✅ {orphaned_count} immagini orfane eliminate"))
-            else:
-                self.stdout.write("ℹ️  Nessuna immagine orfana trovata")
-                
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f"❌ Errore durante cleanup: {e}"))
-    
-    def handle_migrate(self, options):
-        """Migra immagini esistenti su Cloudinary"""
-        self.stdout.write(self.style.HTTP_INFO("=== MIGRAZIONE IMMAGINI ==="))
-        
-        if not is_cloudinary_configured():
-            self.stdout.write(self.style.ERROR("❌ Cloudinary non configurato"))
-            return
-        
-        limit = options['limit']
-        dry_run = options['dry_run']
-        
-        if dry_run:
-            self.stdout.write(self.style.WARNING("🧪 MODALITÀ DRY-RUN"))
-        
-        # Migra immagini Items
-        self.stdout.write("🔄 Migrazione immagini Items...")
-        items = Item.objects.exclude(image='')[:limit]
-        
-        migrated_items = 0
-        for item in items:
-            try:
-                if not dry_run:
-                    public_id = f"items/item_{item.pk}_{item.slug}"
-                    result = upload_image_to_cloudinary(
-                        item.image.file,
-                        folder="items",
-                        public_id=public_id
-                    )
-                    
-                    if result:
-                        migrated_items += 1
-                        self.stdout.write(f"  ✅ Item {item.pk}: {item.title[:30]}...")
-                    else:
-                        self.stdout.write(f"  ❌ Errore Item {item.pk}")
-                else:
-                    migrated_items += 1
-                    self.stdout.write(f"  🧪 Item {item.pk}: {item.title[:30]}... (simulato)")
-                    
-            except Exception as e:
-                self.stdout.write(f"  ❌ Errore Item {item.pk}: {e}")
-        
-        # Migra immagini TradeMessage
-        self.stdout.write("🔄 Migrazione immagini Trade Messages...")
-        trade_messages = TradeMessage.objects.exclude(image='')[:limit]
-        
-        migrated_messages = 0
-        for msg in trade_messages:
-            try:
-                if not dry_run:
-                    public_id = f"trade_messages/trade_{msg.trade.pk}/msg_{msg.pk}"
-                    result = upload_image_to_cloudinary(
-                        msg.image.file,
-                        folder="trade_messages",
-                        public_id=public_id
-                    )
-                    
-                    if result:
-                        migrated_messages += 1
-                        self.stdout.write(f"  ✅ Message {msg.pk}")
-                    else:
-                        self.stdout.write(f"  ❌ Errore Message {msg.pk}")
-                else:
-                    migrated_messages += 1
-                    self.stdout.write(f"  🧪 Message {msg.pk} (simulato)")
-                    
-            except Exception as e:
-                self.stdout.write(f"  ❌ Errore Message {msg.pk}: {e}")
-        
-        # Riepilogo
-        total_migrated = migrated_items + migrated_messages
-        self.stdout.write(self.style.SUCCESS(f"\n✅ Migrazione completata:"))
-        self.stdout.write(f"  📦 Items: {migrated_items}")
-        self.stdout.write(f"  💬 Messages: {migrated_messages}")
-        self.stdout.write(f"  📊 Totale: {total_migrated}")
-    
-    def handle_test(self, options):
-        """Testa configurazione Cloudinary"""
-        self.stdout.write(self.style.HTTP_INFO("=== TEST CLOUDINARY ==="))
-        
-        if not is_cloudinary_configured():
-            self.stdout.write(self.style.ERROR("❌ Cloudinary non configurato"))
-            return
-        
-        try:
-            # Test connessione API
-            import cloudinary.api
-
-<<TRUNCATED FILE: limited to 300 lines>>
-```
-
-
-### project/settings.py
-
-```python
-# -*- coding:utf-8 -*-
-import os
-import environ
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-env = environ.Env(
-    DEBUG=(bool, False),
-    CACHE_URL=(str, 'locmemcache://'),
-    EMAIL_URL=(str, 'consolemail://'),
-    SECRET_KEY=(str, 'secret'),
-    DATABASE_URL=(str, 'sqlite:///db.sqlite'),
-)
-
-env.read_env(str(os.path.join(BASE_DIR, ".env")))
-
-DEBUG = env('DEBUG')
-SECRET_KEY = env('SECRET_KEY')
-
-ADMINS = (
-    ('Demo Classified Admin', os.environ.get('ADMIN_EMAIL', '***REDACTED***')),
-)
-
-MANAGERS = ADMINS
-
-# Expected comma separated string with the ALLOWED_HOSTS list
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '***REDACTED***').split(',')
-
-# (Opzionale ma utile in deploy dietro proxy/Render per OAuth)
-# Comma-separated, es: "https://nintendo-swap.onrender.com"
-CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', '***REDACTED***') if os.environ.get('CSRF_TRUSTED_ORIGINS') else []
-
-DATABASES = {
-    'default': env.db(),
-}
-
-# Cache configuration for development
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'default-cache',
-        'OPTIONS': {
-            'MAX_ENTRIES': 1000,
-            'CULL_FREQUENCY': 3,
-        }
-    }
-}
-
-# Local time zone for this installation.
-TIME_ZONE = 'UTC'
-LANGUAGE_CODE = 'en-us'
-SITE_ID = 1
-USE_I18N = True
-USE_L10N = True
-USE_TZ = True
-
-# ============================================
-# CONFIGURAZIONE CLOUDINARY PER IMMAGINI
-# ============================================
-
-# Configurazione Cloudinary
-CLOUDINARY_STORAGE = {
-    'CLOUD_NAME': env('CLOUDINARY_CLOUD_NAME', default='your_cloud_name'),
-    'API_KEY': env('CLOUDINARY_API_KEY', default='your_api_key'), 
-    'API_SECRET': env('CLOUDINARY_API_SECRET', default='your_api_secret'),
-    'SECURE': True,  # Usa HTTPS
-}
-
-# Solo se Cloudinary è configurato correttamente
-if (CLOUDINARY_STORAGE['CLOUD_NAME'] != 'your_cloud_name' and 
-    CLOUDINARY_STORAGE['API_KEY'] != 'your_api_key'):
-    
-    import cloudinary
-    import cloudinary.uploader
-    import cloudinary.api
-    
-    cloudinary.config(
-        cloud_name=CLOUDINARY_STORAGE['CLOUD_NAME'],
-        api_key=CLOUDINARY_STORAGE['API_KEY'],
-        api_secret=CLOUDINARY_STORAGE['API_SECRET'],
-        secure=CLOUDINARY_STORAGE['SECURE']
-    )
-    
-    # Configurazioni Cloudinary avanzate
-    CLOUDINARY_STORAGE.update({
-        'FOLDER': 'ninvendo',  # Cartella principale
-        'FORMAT': 'auto',      # Formato automatico (WebP quando possibile)
-        'QUALITY': 'auto:best',  # Qualità automatica ottimizzata
-        'FETCH_FORMAT': 'auto', # Formato di fetch automatico
-        'FLAGS': 'progressive', # Caricamento progressivo
-    })
-
-# ============================================
-# CONFIGURAZIONI CLOUDINARY TRASFORMAZIONI
-# ============================================
-
-# Preset di trasformazioni per diverse dimensioni
-CLOUDINARY_TRANSFORMATIONS = {
-    'thumbnail': {
-        'width': 150,
-        'height': 150,
-        'crop': 'fill',
-        'quality': 'auto:good',
-        'format': 'auto'
-    },
-    'medium': {
-        'width': 400, 
-        'height': 300,
-        'crop': 'fill',
-        'quality': 'auto:good',
-        'format': 'auto'
-    },
-    'large': {
-        'width': 800,
-        'height': 600,
-        'crop': 'fit',
-        'quality': 'auto:best',
-        'format': 'auto'
-    },
-    'trade_message': {
-        'width': 300,
-        'height': 300,
-        'crop': 'fit',
-        'quality': 'auto:good',
-        'format': 'auto'
-    },
-    'hero': {
-        'width': 1200,
-        'height': 400,
-        'crop': 'fill',
-        'quality': 'auto:best',
-        'format': 'auto'
-    }
-}
-
-# ============================================
-# MEDIA E STATIC FILES
-# ============================================
-
-# Absolute filesystem path to the directory that will hold user-uploaded files.
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-MEDIA_URL = "/media/"
-
-# Absolute path to the directory static files should be collected to.
-STATIC_ROOT = os.path.join(BASE_DIR, 'static')
-STATIC_URL = '/static/'
-
-# Additional locations of static files
-STATICFILES_DIRS = (
-    # Put strings here, like '/home/html/static' or 'C:/www/django/static'.
-)
-
-# Configurazioni upload immagini
-MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB max per immagine
-ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-
-# Configurazione Storage - MANTENIAMO LA LOGICA ORIGINALE
-# Usa Cloudinary per i MEDIA (file caricati dagli utenti) SOLO SE CONFIGURATO
-if not DEBUG and (CLOUDINARY_STORAGE['CLOUD_NAME'] != 'your_cloud_name'):
-    # PRODUZIONE: Cloudinary per media files se configurato
-    DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
-else:
-    # SVILUPPO O CLOUDINARY NON CONFIGURATO: Filesystem locale
-    DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"
-
-STORAGES = {
-    "default": {
-        "BACKEND": DEFAULT_FILE_STORAGE,
-    },
-    "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
-    },
-}
-
-MIDDLEWARE = (
-    'whitenoise.middleware.WhiteNoiseMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.locale.LocaleMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-)
-
-# 🔐 Backends: Google OAuth2 + username/password Django (e manteniamo Facebook se già configurato)
-AUTHENTICATION_BACKENDS = (
-    'social_core.backends.google.GoogleOAuth2',     # Google Login
-    'social_core.backends.facebook.FacebookOAuth2', # (opzionale) Facebook già presente
-    'django.contrib.auth.backends.ModelBackend',    # Username/Password nativo Django
-)
-
-ROOT_URLCONF = 'project.urls'
-
-TEMPLATES = [
-    {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'APP_DIRS': True,
-        'DIRS': [os.path.join(BASE_DIR, 'templates')],
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.debug',
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
-
-                # Social Auth context processors
-                'social_django.context_processors.backends',
-                'social_django.context_processors.login_redirect',
-
-                # Django Classified context processors
-                'django_classified.context_processors.common_values',
-                
-                # ⭐ CLOUDINARY CONTEXT PROCESSOR (se necessario)
-                'project.context_processors.site_config',
-                'project.templatetags.cloudinary_tags.cloudinary_context',
-            ],
-            'debug': True
-        },
-    },
-]
-
-INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.humanize',
-    'django.contrib.messages',
-    'django.contrib.sessions',
-    'django.contrib.sitemaps',
-    'django.contrib.sites',
-    'django.contrib.staticfiles',  # ⭐ AGGIUNTO - era mancante!
-
-    'bootstrapform',
-    'sorl.thumbnail',
-    'django_classified',
-    'social_django',
-
-    # ⭐ MODULI ESSENZIALI PER BARATTO
-    'crispy_forms',         # django-crispy-forms
-    'crispy_bootstrap4',    # crispy bootstrap4 template pack
-    'widget_tweaks',        # django-widget-tweaks
-    'django_extensions',    # utilities per sviluppo
-
-    # ⭐ CLOUDINARY SUPPORT - ORDINE CORRETTO
-    'cloudinary_storage',   # DEVE essere prima di cloudinary
-    'cloudinary',          # cloudinary
-
-    'demo',
-    'registration',  
-    "trade",
-    'payments',
-    
-    # ⭐ PROJECT APP (per management commands e utilities) - SE NECESSARIO
-    'project',
-]
-
-# ⭐ CONFIGURAZIONI CRISPY FORMS
-CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap4"
-CRISPY_TEMPLATE_PACK = "bootstrap4"
-
-# Email per notifiche (già presente, assicuriamoci sia configurato)
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # development
-# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'  # production
-
-ACCOUNT_ACTIVATION_DAYS = 7  # per backend 'default' (con email)
-
-LOGIN_REDIRECT_URL = '/'
-LOGIN_URL = '/login/'
-LOGOUT_REDIRECT_URL = '/'
-
-DCF_SITE_NAME = 'NinVendo : a place for NinTendo lovers'
-
-# ---- Social Auth: Google (aggiunto) ----
-# Imposta questi valori nell'ambiente (.env o Render env)
-SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = '***REDACTED***'SOCIAL_AUTH_GOOGLE_OAUTH2_KEY')
-SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = '***REDACTED***'SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET')
-
-# Se sei dietro proxy/https terminato a monte (es. Render), abilita il redirect HTTPS:
-# In locale lascialo False; in produzione metti env SOCIAL_AUTH_REDIRECT_IS_HTTPS='***REDACTED***'
-SOCIAL_AUTH_REDIRECT_IS_HTTPS = '***REDACTED***'SOCIAL_AUTH_REDIRECT_IS_HTTPS', default=False)
-
-# ---- Social Auth: Facebook (già presente, opzionale) ----
-SOCIAL_AUTH_FACEBOOK_KEY = '***REDACTED***'SOCIAL_AUTH_FACEBOOK_KEY')
-SOCIAL_AUTH_FACEBOOK_SECRET = '***REDACTED***'SOCIAL_AUTH_FACEBOOK_SECRET')
-SOCIAL_AUTH_FACEBOOK_SCOPE = '***REDACTED***'email']
-SOCIAL_AUTH_FACEBOOK_PROFILE_EXTRA_PARAMS = '***REDACTED***'
-    'fields': 'id, name, email'
-}
-
-SOCIAL_AUTH_EMAIL_FORM_HTML = '***REDACTED***'  # ⭐ MANTENUTO ORIGINALE
-SOCIAL_AUTH_EMAIL_VALIDATION_URL = '***REDACTED***'
-
-SOCIAL_AUTH_PIPELINE = '***REDACTED***'
-    'social_core.pipeline.social_auth.social_details',
-    'social_core.pipeline.social_auth.social_uid',
-    'social_core.pipeline.social_auth.auth_allowed',
-    'social_core.pipeline.social_auth.social_user',
-    'social_core.pipeline.user.get_username',
-    'social_core.pipeline.mail.mail_validation',
-    'social_core.pipeline.user.create_user',
-
-<<TRUNCATED FILE: limited to 300 lines>>
-```
-
-
-### project/templatetags/cloudinary_tags.py
-
-```python
-"""
-Template tags per integrare Cloudinary nei template Django
-"""
-from django import template
-from django.utils.safestring import mark_safe
-from django.utils.html import format_html
-from ..cloudinary_utils import (
-    get_cloudinary_url,
-    get_optimized_image_tag,
-    is_cloudinary_configured,
-    cloudinary_templatetag
-)
-import logging
-
-register = template.Library()
-logger = logging.getLogger(__name__)
-
-
-@register.simple_tag
-@cloudinary_templatetag
-def cloudinary_url(image_field, transformation='medium'):
-    """
-    Genera URL Cloudinary per un'immagine
-    
-    Uso: {% cloudinary_url item.image 'thumbnail' %}
-    """
-    return get_cloudinary_url(image_field, transformation) or ''
-
-
-@register.simple_tag
-@cloudinary_templatetag
-def cloudinary_img(image_field, alt_text="", css_class="img-fluid", transformation='medium'):
-    """
-    Genera tag <img> ottimizzato con Cloudinary
-    
-    Uso: {% cloudinary_img item.image "Descrizione" "img-fluid rounded" "large" %}
-    """
-    html = get_optimized_image_tag(image_field, alt_text, css_class, transformation)
-    return mark_safe(html)
-
-
-@register.simple_tag
-@cloudinary_templatetag 
-def cloudinary_thumbnail(image_field, alt_text="", css_class="thumbnail"):
-    """
-    Genera thumbnail ottimizzata
-    
-    Uso: {% cloudinary_thumbnail item.image "Thumbnail prodotto" %}
-    """
-    html = get_optimized_image_tag(image_field, alt_text, css_class, 'thumbnail')
-    return mark_safe(html)
-
-
-@register.simple_tag
-@cloudinary_templatetag
-def cloudinary_responsive_img(image_field, alt_text="", css_class="img-responsive", sizes="(max-width: 768px) 100vw, 50vw"):
-    """
-    Genera immagine completamente responsive con sizes attribute
-    
-    Uso: {% cloudinary_responsive_img item.image "Prodotto" "img-fluid" "(max-width: 768px) 100vw, 50vw" %}
-    """
-    if not image_field:
-        return mark_safe(f'<div class="no-image-placeholder {css_class}"><span class="text-muted">📷 Nessuna immagine</span></div>')
-    
-    try:
-        # URL base
-        base_url = get_cloudinary_url(image_field, 'medium')
-        if not base_url:
-            return mark_safe(f'<img src="{image_field.url}" alt="{alt_text}" class="{css_class}" loading="lazy">')
-        
-        # Se Cloudinary configurato, crea srcset completo per responsive
-        if is_cloudinary_configured():
-            # Diverse larghezze per responsive breakpoints
-            widths = [320, 480, 640, 800, 1024, 1200]
-            srcset_urls = []
-            
-            for width in widths:
-                # Usa l'utility per generare URL con larghezza specifica
-                from cloudinary import CloudinaryImage
-                import os
-                
-                if hasattr(image_field, 'public_id'):
-                    public_id = image_field.public_id
-                else:
-                    public_id = os.path.splitext(image_field.name)[0]
-                
-                cloudinary_image = CloudinaryImage(public_id)
-                url = cloudinary_image.build_url(
-                    width=width,
-                    crop='scale',
-                    quality='auto:good',
-                    format='auto'
-                )
-                srcset_urls.append(f"{url} {width}w")
-            
-            srcset = ", ".join(srcset_urls)
-            
-            return mark_safe(format_html(
-                '<img src="{}" srcset="{}" sizes="{}" alt="{}" class="{}" loading="lazy">',
-                base_url, srcset, sizes, alt_text, css_class
-            ))
-        else:
-            return mark_safe(format_html(
-                '<img src="{}" alt="{}" class="{}" loading="lazy">',
-                base_url, alt_text, css_class
-            ))
-            
-    except Exception as e:
-        logger.error(f"Errore cloudinary_responsive_img: {e}")
-        return mark_safe(f'<img src="{image_field.url}" alt="{alt_text}" class="{css_class}" loading="lazy">')
-
-
-@register.inclusion_tag('cloudinary/image_gallery.html')
-@cloudinary_templatetag
-def cloudinary_gallery(images, thumbnail_class="col-md-3", lightbox=True):
-    """
-    Crea una galleria di immagini con Cloudinary
-    
-    Uso: {% cloudinary_gallery item.images.all %}
-    """
-    return {
-        'images': images,
-        'thumbnail_class': thumbnail_class,
-        'lightbox': lightbox,
-        'cloudinary_configured': is_cloudinary_configured()
-    }
-
-
-@register.simple_tag
-def cloudinary_status():
-    """
-    Verifica stato configurazione Cloudinary
-    
-    Uso: {% cloudinary_status %}
-    """
-    return "✅ Configurato" if is_cloudinary_configured() else "❌ Non configurato"
-
-
-@register.filter
-@cloudinary_templatetag
-def cloudinary_transform(image_field, transformation):
-    """
-    Filter per trasformazioni Cloudinary
-    
-    Uso: {{ item.image|cloudinary_transform:"thumbnail" }}
-    """
-    return get_cloudinary_url(image_field, transformation) or ''
-
-
-@register.simple_tag
-@cloudinary_templatetag
-def cloudinary_background_img(image_field, css_class="hero-bg", transformation='large'):
-    """
-    Genera CSS per background-image con Cloudinary
-    
-    Uso: {% cloudinary_background_img hero.image "hero-section" "large" %}
-    """
-    if not image_field:
-        return mark_safe(f'<div class="{css_class} no-bg-image"></div>')
-    
-    url = get_cloudinary_url(image_field, transformation)
-    if not url:
-        url = image_field.url
-    
-    style = f'background-image: url({url}); background-size: cover; background-position: center;'
-    
-    return mark_safe(format_html(
-        '<div class="{}" style="{}"></div>',
-        css_class, style
-    ))
-
-
-@register.simple_tag(takes_context=True)
-@cloudinary_templatetag  
-def cloudinary_share_image(context, image_field, transformation='large'):
-    """
-    Genera URL assoluto per condivisione social (Open Graph)
-    
-    Uso: {% cloudinary_share_image item.image "large" %}
-    """
-    if not image_field:
-        return ""
-    
-    url = get_cloudinary_url(image_field, transformation)
-    if not url:
-        url = image_field.url
-    
-    # Converti in URL assoluto se necessario
-    request = context.get('request')
-    if request and not url.startswith('http'):
-        url = request.build_absolute_uri(url)
-    
-    return url
-
-
-# Template context processor
-def cloudinary_context(request):
-    """
-    Context processor per aggiungere info Cloudinary in tutti i template
-    """
-    return {
-        'CLOUDINARY_CONFIGURED': is_cloudinary_configured(),
-        'CLOUDINARY_TRANSFORMATIONS': getattr(settings, 'CLOUDINARY_TRANSFORMATIONS', {})
-    }
-```
-
-
-### project/urls.py
-
-```python
-from django.urls import include, re_path, path
-from django.contrib import admin
-from django.contrib.auth import views as auth_views
-from django.views.generic import TemplateView
-from django.conf.urls.static import static
-from django.conf import settings
-
-
-
-urlpatterns = [
-    re_path('', include('django_classified.urls', namespace='django_classified')),
-    re_path('social/', include('social_django.urls', namespace='social')),
-    path('admin/', admin.site.urls),
-
-    # Auth base
-    path('login/', auth_views.LoginView.as_view(template_name='django_classified/login.html'), name='login'),
-    path('logout/', auth_views.LogoutView.as_view(next_page='/'), name='logout'),
-
-    # Password reset (flow completo)
-    path('password-reset/', auth_views.PasswordResetView.as_view(
-        template_name='django_classified/password_reset_form.html',
-        email_template_name='django_classified/password_reset_email.txt',
-        subject_template_name='django_classified/password_reset_subject.txt',
-        success_url='/password-reset/done/'
-    ), name='password_reset'),
-
-    path('password-reset/done/', auth_views.PasswordResetDoneView.as_view(
-        template_name='django_classified/password_reset_done.html'
-    ), name='password_reset_done'),
-
-    path('reset/<uidb64>/<token>/', auth_views.PasswordResetConfirmView.as_view(
-        template_name='django_classified/password_reset_confirm.html',
-        success_url='/reset/done/'
-    ), name='password_reset_confirm'),
-
-    path('reset/done/', auth_views.PasswordResetCompleteView.as_view(
-        template_name='django_classified/password_reset_complete.html'
-    ), name='password_reset_complete'),
-
-    # Pagina usata da social auth (se serve)
-    path('email-sent/', TemplateView.as_view(template_name='django_classified/email_sent.html'), name='email_sent'),
-
-    # Registrazione utenti (django-registration-redux, backend simple)
-    path('accounts/', include('registration.backends.simple.urls')),
-
-    # Modulo "baratto"
-    path('trade/', include('trade.urls', namespace='trade')),
-
-    # ⭐ NUOVO MODULO PAGAMENTI
-    path('payments/', include('payments.urls', namespace='payments')),  # <-- Aggiungi questa riga
-
-    # Debug Cloudinary (solo in sviluppo)
-    path('debug/cloudinary/', TemplateView.as_view(template_name='debug_cloudinary.html'), name='debug_cloudinary'),
-
-   
-
-    path('debug/cloudinary/', TemplateView.as_view(template_name='debug_simple.html'), name='debug_cloudinary'),
-]
-
-
-
-# Alla fine del file
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-```
-
-
-### README_CLOUDINARY.md
-
-```md
-# 📷 Cloudinary Integration - NINVENDO
-
-Guida completa per configurare e utilizzare Cloudinary per la gestione delle immagini nel progetto NINVENDO.
-
-## 🚀 Panoramica
-
-Cloudinary è un servizio cloud per la gestione, ottimizzazione e distribuzione di immagini. Offre:
-
-- **🔄 Ottimizzazione automatica** - Ridimensionamento, compressione, formato automatico
-- **🌍 CDN globale** - Distribuzione veloce in tutto il mondo  
-- **📱 Immagini responsive** - Adattamento automatico ai diversi device
-- **🎨 Trasformazioni on-the-fly** - Ritaglio, filtri, effetti in tempo reale
-- **💾 Storage sicuro** - Backup e ridondanza automatici
-
-## 🛠️ Setup Cloudinary
-
-### 1. Registrazione Account
-
-1. Vai su [cloudinary.com](https://cloudinary.com)
-2. Registra un account gratuito (25GB storage + 25GB traffico/mese)
-3. Accedi al **Dashboard**
-
-### 2. Ottenere le Credenziali
-
-Dal dashboard Cloudinary copia:
-
-```bash
-Cloud Name: your_cloud_name
-API Key: 123456789012345  
-API Secret: your_api_secret
-```
-
-### 3. Configurazione Ambiente
-
-Aggiungi al tuo file `.env`:
-
-```bash
-CLOUDINARY_CLOUD_NAME=your_cloud_name
-CLOUDINARY_API_KEY=your_api_key
-CLOUDINARY_API_SECRET=your_api_secret
-```
-
-### 4. Verifica Configurazione
-
-```bash
-python manage.py cloudinary_admin status
-```
-
-## 📋 Funzionalità Implementate
-
-### 🎯 Template Tags
-
-#### Immagine Ottimizzata Base
-```html
-{% load cloudinary_tags %}
-
-<!-- Immagine responsive ottimizzata -->
-{% cloudinary_img item.image "Descrizione" "img-fluid" "medium" %}
-```
-
-#### URL Cloudinary
-```html
-<!-- Solo URL per uso in CSS/JS -->
-{% cloudinary_url item.image "large" %}
-```
-
-#### Thumbnail
-```html
-<!-- Thumbnail 150x150 -->
-{% cloudinary_thumbnail item.image "Prodotto" "thumbnail-class" %}
-```
-
-#### Immagine Responsive Completa
-```html
-<!-- Con srcset per tutti i breakpoints -->
-{% cloudinary_responsive_img item.image "Prodotto" "img-fluid" "(max-width: 768px) 100vw, 50vw" %}
-```
-
-#### Galleria Immagini
-```html
-<!-- Galleria con lightbox -->
-{% cloudinary_gallery item.images.all "col-md-3" True %}
-```
-
-#### Background Image CSS
-```html
-<!-- Div con background-image ottimizzata -->
-{% cloudinary_background_img hero.image "hero-section" "large" %}
-```
-
-### 🔧 Trasformazioni Predefinite
-
-Configurate in `settings.py`:
-
-```python
-CLOUDINARY_TRANSFORMATIONS = {
-    'thumbnail': {    # 150x150, ritagliata
-        'width': 150,
-        'height': 150,
-        'crop': 'fill',
-        'quality': 'auto:good',
-        'format': 'auto'
-    },
-    'medium': {       # 400x300, adattata
-        'width': 400,
-        'height': 300, 
-        'crop': 'fill',
-        'quality': 'auto:good',
-        'format': 'auto'
-    },
-    'large': {        # 800x600, preserva proporzioni
-        'width': 800,
-        'height': 600,
-        'crop': 'fit',
-        'quality': 'auto:best',
-        'format': 'auto'
-    }
-}
-```
-
-### 🤖 Upload Automatico
-
-Gli upload su Cloudinary avvengono automaticamente tramite **Django signals**:
-
-- **Nuovi Item** → Upload immagine principale
-- **Nuovi TradeMessage** → Upload immagine allegata
-- **Eliminazione** → Cleanup automatico su Cloudinary
-
-## 🎛️ Management Commands
-
-### Status e Diagnostica
-
-```bash
-# Verifica configurazione
-python manage.py cloudinary_admin status
-
-# Statistiche utilizzo storage  
-python manage.py cloudinary_admin stats
-
-# Test connessione e upload
-python manage.py cloudinary_admin test
-```
-
-### Migrazione Immagini
-
-```bash
-# Migra immagini esistenti su Cloudinary
-python manage.py cloudinary_admin migrate --limit 100
-
-# Simulazione senza upload reale
-python manage.py cloudinary_admin migrate --dry-run --limit 10
-```
-
-### Pulizia Storage
-
-```bash
-# Rimuovi immagini orfane da Cloudinary
-python manage.py cloudinary_admin cleanup
-
-# Simulazione pulizia
-python manage.py cloudinary_admin cleanup --dry-run
-
-# Backup URL prima della pulizia
-python manage.py cloudinary_admin backup
-```
-
-## 🏗️ Architettura del Sistema
-
-### Flusso Upload
-
-1. **Utente carica immagine** → Salvata localmente (sviluppo) o Cloudinary (produzione)
-2. **Signal handler** → Upload automatico su Cloudinary (solo produzione)
-3. **Template rendering** → URL ottimizzati tramite template tags
-4. **Browser** → Carica immagini ottimizzate da CDN Cloudinary
-
-### Storage Strategy
-
-- **🛠️ Sviluppo**: Filesystem locale + template tags simulano Cloudinary
-- **🚀 Produzione**: Upload diretto su Cloudinary + CDN delivery
-
-### File Organization
-
-```
-ninvendo/                    # Cartella root su Cloudinary
-├── items/                   # Immagini prodotti
-│   ├── item_1_nintendo-switch/
-│   └── item_2_pokemon-cards/
-├── trade_messages/          # Immagini messaggi scambi
-│   ├── trade_1/msg_1/
-│   └── trade_1/msg_2/
-└── test/                   # Immagini di test
-```
-
-## 🎨 Esempi Pratici
-
-### Lista Prodotti con Thumbnail
-
-```html
-{% load cloudinary_tags %}
-
-<div class="products-grid">
-    {% for item in items %}
-        <div class="product-card">
-            <!-- Thumbnail ottimizzata 150x150 -->
-            {% cloudinary_thumbnail item.image item.title "product-thumb" %}
-            
-            <h5>{{ item.title }}</h5>
-            <p class="price">{{ item.price }}€</p>
-        </div>
-    {% endfor %}
-</div>
-```
-
-### Dettaglio Prodotto Responsive
-
-```html
-{% load cloudinary_tags %}
-
-<div class="product-detail">
-    <!-- Immagine principale responsive -->
-    <div class="main-image">
-        {% cloudinary_responsive_img item.image item.title "img-fluid" "(max-width: 768px) 100vw, 60vw" %}
-    </div>
-    
-    <!-- Galleria immagini aggiuntive -->
-    {% if item.images.all %}
-        <div class="image-gallery">
-            {% cloudinary_gallery item.images.all "col-md-3" True %}
-        </div>
-    {% endif %}
-</div>
-```
-
-### Meta Tag Open Graph
-
-```html
-{% load cloudinary_tags %}
-
-<!-- Per condivisione social media -->
-<meta property="og:image" content="{% cloudinary_share_image item.image 'large' %}" />
-```
-
-### Hero Section con Background
-
-```html
-{% load cloudinary_tags %}
-
-<!-- Hero con background ottimizzata -->
-{% cloudinary_background_img hero.image "hero-banner d-flex align-items-center justify-content-center" "hero" %}
-    <div class="hero-content text-white text-center">
-        <h1>Benvenuto su NINVENDO</h1>
-        <p>Il marketplace per i fan di Nintendo</p>
-    </div>
-</div>
-
-<style>
-.hero-banner {
-    min-height: 60vh;
-    background-size: cover;
-    background-position: center;
-    position: relative;
-}
-
-.hero-banner::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0; 
-    bottom: 0;
-    background: rgba(0,0,0,0.4);
-    z-index: 1;
-}
-
-.hero-content {
-    position: relative;
-    z-index: 2;
-}
-</style>
-```
-
-## 🔍 Debug e Troubleshooting
-
-### Verifiche Comuni
-
-```bash
-# 1. Configurazione
-python manage.py cloudinary_admin status
-
-# 2. Test upload
-python manage.py cloudinary_admin test
-
-# 3. Verifica immagini nel database
-python manage.py shell
->>> from django_classified.models import Item
->>> Item.objects.filter(image__isnull=False).count()
-```
-
-### Log di Debug
-
-
-<<TRUNCATED FILE: limited to 300 lines>>
-```
-
-
-### requirements.txt
-
-```
-
-boto3==1.35.92 
-django-classified==1.1.1
-django-environ==0.11.2
-django==5.1.8
-gunicorn==23.0.0
-psycopg2-binary==2.9.10
-python-memcached==1.62
-social-auth-app-django==5.4.2
-whitenoise==6.8.2
-django-fsm==3.0.0
-
-
-django-crispy-forms==2.1
-crispy-bootstrap4==2024.1
-django-widget-tweaks==1.5.0
-django-extensions==3.2.3
-
-
-django-notifications-hq==1.8.0  
-
-stripe==7.0.0
-
-# ============================================
-# CLOUDINARY SUPPORT - AGGIUNTO
-# ============================================
-cloudinary==1.40.0
-django-cloudinary-storage==0.3.0
-pillow==10.4.0
-```
-
-
-### templates/cloudinary/image_gallery.html
-
-```html
-{% load cloudinary_tags %}
-
-<div class="cloudinary-gallery">
-    <div class="row">
-        {% for image in images %}
-            <div class="{{ thumbnail_class }} mb-3">
-                <div class="image-container position-relative">
-                    {% if lightbox %}
-                        <a href="{% cloudinary_url image 'large' %}" 
-                           data-lightbox="gallery" 
-                           data-title="Immagine {{ forloop.counter }}">
-                            {% cloudinary_img image "Immagine prodotto" "img-fluid rounded shadow-sm" "medium" %}
-                        </a>
-                    {% else %}
-                        {% cloudinary_img image "Immagine prodotto" "img-fluid rounded shadow-sm" "medium" %}
-                    {% endif %}
-                    
-                    <!-- Overlay info se necessario -->
-                    <div class="image-overlay position-absolute" style="bottom: 5px; right: 5px;">
-                        <span class="badge badge-dark">{{ forloop.counter }}/{{ images.count }}</span>
-                    </div>
-                </div>
-            </div>
-        {% empty %}
-            <div class="col-12 text-center">
-                <div class="no-images-placeholder p-4 bg-light rounded">
-                    <i class="fas fa-images fa-3x text-muted mb-2"></i>
-                    <p class="text-muted mb-0">Nessuna immagine disponibile</p>
-                </div>
-            </div>
-        {% endfor %}
-    </div>
-</div>
-
-{% if lightbox and images %}
-    <!-- Includi Lightbox CSS/JS se non già presente -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.3/css/lightbox.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.3/js/lightbox.min.js"></script>
-    
-    <script>
-        // Configurazione Lightbox
-        lightbox.option({
-            'resizeDuration': 200,
-            'wrapAround': true,
-            'fadeDuration': 300
-        });
-    </script>
-{% endif %}
-
-<style>
-    .cloudinary-gallery .image-container {
-        overflow: hidden;
-        border-radius: 0.5rem;
-        transition: transform 0.3s ease;
-    }
-    
-    .cloudinary-gallery .image-container:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    }
-    
-    .no-images-placeholder {
-        border: 2px dashed #dee2e6;
-    }
-    
-    .image-overlay {
-        opacity: 0;
-        transition: opacity 0.3s ease;
-    }
-    
-    .image-container:hover .image-overlay {
-        opacity: 1;
-    }
-</style>
-```
-
-
-### templates/debug_cloudinary.html
-
-```html
-{% extends "django_classified/_base.html" %}
-{% load cloudinary %}
-
-{% block title %}🔧 Debug Cloudinary - {{ SITE_NAME }}{% endblock %}
-
-{% block body %}
-<div class="container mt-4">
-    <h1>🔧 Debug Cloudinary</h1>
-    
-    <!-- Info Sito -->
-    <div class="card mb-4">
-        <div class="card-header bg-info text-white">
-            <h5>🏠 Configurazione Sito</h5>
-        </div>
-        <div class="card-body">
-            <p><strong>Nome:</strong> {{ SITE_NAME }}</p>
-            <p><strong>Descrizione:</strong> {{ SITE_DESCRIPTION }}</p>
-            <p><strong>Tagline:</strong> {{ SITE_TAGLINE }}</p>
-            <p><strong>URL:</strong> {{ SITE_URL }}</p>
-            <p><strong>Debug Mode:</strong> {{ DEBUG|yesno:"✅ Attivo,❌ Disattivo" }}</p>
-        </div>
-    </div>
-
-    <!-- Status Cloudinary -->
-    <div class="card mb-4">
-        <div class="card-header bg-primary text-white">
-            <h5>☁️ Status Cloudinary</h5>
-        </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col-md-6">
-                    <p><strong>Configurato:</strong> 
-                        <span class="badge badge-{{ CLOUDINARY_CONFIGURED|yesno:'success,danger' }}">
-                            {{ CLOUDINARY_CONFIGURED|yesno:"✅ SI,❌ NO" }}
-                        </span>
-                    </p>
-                    <p><strong>Attivo:</strong> 
-                        <span class="badge badge-{{ CLOUDINARY_ACTIVE|yesno:'success,warning' }}">
-                            {{ CLOUDINARY_ACTIVE|yesno:"🌥️ Cloudinary,📁 Filesystem" }}
-                        </span>
-                    </p>
-                    <p><strong>Dev Mode:</strong> 
-                        <span class="badge badge-{{ USE_CLOUDINARY_IN_DEV|yesno:'info,secondary' }}">
-                            {{ USE_CLOUDINARY_IN_DEV|yesno:"🧪 Test Mode,📁 Locale" }}
-                        </span>
-                    </p>
-                </div>
-                <div class="col-md-6">
-                    {% if CLOUDINARY_TRANSFORMATIONS %}
-                        <p><strong>Trasformazioni:</strong></p>
-                        <ul class="small">
-                            {% for name, config in CLOUDINARY_TRANSFORMATIONS.items %}
-                                <li>{{ name }}: {{ config.width }}x{{ config.height }}</li>
-                            {% endfor %}
-                        </ul>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Test Template Tags -->
-    {% if CLOUDINARY_CONFIGURED %}
-        <div class="card mb-4">
-            <div class="card-header bg-success text-white">
-                <h5>🏷️ Test Template Tags</h5>
-            </div>
-            <div class="card-body">
-                <p>I template tags Cloudinary sono disponibili:</p>
-                <ul>
-                    <li>✅ <code>{% templatetag openblock %} load cloudinary_tags {% templatetag closeblock %}</code></li>
-                    <li>✅ <code>{% templatetag openblock %} cloudinary_img item.image {% templatetag closeblock %}</code></li>
-                    <li>✅ <code>{% templatetag openblock %} cloudinary_url item.image 'medium' {% templatetag closeblock %}</code></li>
-                </ul>
-                
-                <!-- Test immagine se disponibile -->
-                {% comment %}
-                Se hai un'immagine di test puoi decommentare:
-                {% if test_item.image %}
-                    <div class="mt-3">
-                        <h6>Esempio Immagine:</h6>
-                        {% cloudinary_img test_item.image "Test image" "img-fluid" "medium" %}
-                    </div>
-                {% endif %}
-                {% endcomment %}
-            </div>
-        </div>
-    {% else %}
-        <div class="card mb-4">
-            <div class="card-header bg-warning text-white">
-                <h5>⚠️ Cloudinary Non Configurato</h5>
-            </div>
-            <div class="card-body">
-                <p>Per attivare Cloudinary:</p>
-                <ol>
-                    <li>Configura le variabili d'ambiente nel <code>.env</code>:
-                        <pre class="bg-light p-2 mt-2">
-CLOUDINARY_CLOUD_NAME=your_cloud_name
-CLOUDINARY_API_KEY=your_api_key
-CLOUDINARY_API_SECRET=your_api_secret
-USE_CLOUDINARY_IN_DEV=True</pre>
-                    </li>
-                    <li>Riavvia il server: <code>python manage.py runserver</code></li>
-                    <li>Testa: <code>python manage.py cloudinary_admin status</code></li>
-                </ol>
-            </div>
-        </div>
-    {% endif %}
-
-    <!-- Comandi Utili -->
-    <div class="card mb-4">
-        <div class="card-header bg-dark text-white">
-            <h5>🛠️ Comandi Utili</h5>
-        </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col-md-6">
-                    <h6>Verifica:</h6>
-                    <pre class="bg-light p-2 small">python manage.py cloudinary_admin status</pre>
-                    
-                    <h6>Test:</h6>
-                    <pre class="bg-light p-2 small">python manage.py cloudinary_admin test</pre>
-                </div>
-                <div class="col-md-6">
-                    <h6>Migrazione:</h6>
-                    <pre class="bg-light p-2 small">python manage.py cloudinary_admin migrate --limit 10</pre>
-                    
-                    <h6>Statistiche:</h6>
-                    <pre class="bg-light p-2 small">python manage.py cloudinary_admin stats</pre>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Link Utili -->
-    <div class="text-center">
-        <a href="/" class="btn btn-primary">🏠 Torna alla Home</a>
-        <a href="/admin/" class="btn btn-secondary">🔧 Admin</a>
-        {% if user.is_staff %}
-            <a href="{% url 'django_classified:item-new' %}" class="btn btn-success">➕ Testa Upload Immagine</a>
-        {% endif %}
-    </div>
-</div>
-
-<style>
-    pre {
-        font-size: 0.9em;
-        border-radius: 4px;
-    }
-    
-    .badge {
-        font-size: 0.9em;
-    }
-    
-    .card-header h5 {
-        margin-bottom: 0;
-    }
-</style>
-{% endblock %}
-```
-
-
-### templates/django_classified/item_detail.html
-
-```html
-{% extends "django_classified/_base.html" %}
-{% load i18n %}
-{% comment %}⭐ CARICA CLOUDINARY TAGS SE DISPONIBILI{% endcomment %}
-{% load cloudinary_tags %}
-
-{% block title %}{{ item.title }} - {{ item.price }}€{% endblock %}
-
-{% block meta_keywords %}{{ item.title }}, {{ item.area.title }}, {{ item.category.title }}, {{ item.group.title }}{% endblock meta_keywords %}
-
-{% block meta_og %}
-    <meta property="og:title" content="{{ item.title }}" />
-    <meta property="og:description" content="{{ item.description|truncatewords:30|striptags }}" />
-    {% comment %}⭐ USA CLOUDINARY PER IMMAGINI SOCIAL SE DISPONIBILE{% endcomment %}
-    {% if item.image %}
-        {% if CLOUDINARY_CONFIGURED %}
-            <meta property="og:image" content="{% cloudinary_share_image item.image 'large' %}" />
-        {% else %}
-            <meta property="og:image" content="{{ request.build_absolute_uri }}{{ item.image.url }}" />
-        {% endif %}
-    {% endif %}
-    <meta property="og:url" content="{{ request.build_absolute_uri }}" />
-    <meta property="og:type" content="product" />
-{% endblock %}
-
-{% block body %}
-<div class="container">
-    <!-- Breadcrumb esistente (se presente) -->
-    <!-- ... -->
-    
-    <div class="row">
-        <!-- Contenuto principale annuncio -->
-        <div class="col-md-8">
-            <!-- Dettagli annuncio esistenti -->
-            <h1>{{ item.title }}</h1>
-            
-            <!-- Prezzo evidenziato -->
-            <div class="alert alert-success">
-                <h3 class="mb-0">💶 {{ item.price }}€</h3>
-            </div>
-            
-            <!-- 📷 GALLERIA IMMAGINI CON CLOUDINARY OTTIMIZZATA -->
-            {% if item.image_set.all %}
-                <div class="row mb-4">
-                    {% for image in item.image_set.all %}
-                        <div class="col-md-4 mb-2">
-                            {% comment %}⭐ USA CLOUDINARY SE CONFIGURATO, ALTRIMENTI FALLBACK{% endcomment %}
-                            {% if CLOUDINARY_CONFIGURED %}
-                                <a href="{% cloudinary_url image.file 'large' %}" data-lightbox="gallery" data-title="Immagine {{ forloop.counter }}">
-                                    {% cloudinary_img image.file item.title "img-fluid rounded shadow-sm" "medium" %}
-                                </a>
-                            {% else %}
-                                <a href="{{ image.file.url }}" data-lightbox="gallery">
-                                    <img src="{{ image.file.url }}" alt="{{ item.title }}" 
-                                         class="img-fluid rounded shadow-sm" loading="lazy">
-                                </a>
-                            {% endif %}
-                        </div>
-                    {% endfor %}
-                </div>
-            {% elif item.image %}
-                <!-- Immagine singola principale -->
-                <div class="main-image-container mb-4">
-                    {% if CLOUDINARY_CONFIGURED %}
-                        <a href="{% cloudinary_url item.image 'large' %}" data-lightbox="main-image">
-                            {% cloudinary_img item.image item.title "img-fluid rounded shadow-lg" "large" %}
-                        </a>
-                    {% else %}
-                        <a href="{{ item.image.url }}" data-lightbox="main-image">
-                            <img src="{{ item.image.url }}" alt="{{ item.title }}" 
-                                 class="img-fluid rounded shadow-lg" loading="lazy">
-                        </a>
-                    {% endif %}
-                </div>
-            {% else %}
-                <!-- Nessuna immagine -->
-                <div class="no-image-placeholder text-center bg-light rounded p-5 mb-4">
-                    <i class="fas fa-image fa-3x text-muted mb-3"></i>
-                    <p class="text-muted">Nessuna immagine disponibile</p>
-                </div>
-            {% endif %}
-            
-            <!-- Descrizione -->
-            {% if item.description %}
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5>📝 Descrizione</h5>
-                    </div>
-                    <div class="card-body">
-                        {{ item.description|linebreaks }}
-                    </div>
-                </div>
-            {% endif %}
-            
-            <!-- Dettagli tecnici -->
-            <div class="card mb-4">
-                <div class="card-header">
-                    <h5>ℹ️ Dettagli</h5>
-                </div>
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <p><strong>📅 Pubblicato:</strong> {{ item.created|date:"d/m/Y" }}</p>
-                            <p><strong>👤 Venditore:</strong> {{ item.user.username }}</p>
-                        </div>
-                        <div class="col-md-6">
-                            {% if item.area %}
-                                <p><strong>📍 Area:</strong> {{ item.area }}</p>
-                            {% endif %}
-                            {% if item.group %}
-                                <p><strong>📂 Categoria:</strong> {{ item.group }}</p>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Sidebar azioni -->
-        <div class="col-md-4">
-            <!-- 🎮 SEZIONE AZIONI PRINCIPALE -->
-            <div class="card mb-3">
-                <div class="card-header bg-primary text-white">
-                    <h5>🎮 Ottieni questo articolo</h5>
-                </div>
-                <div class="card-body">
-                    {% if user.is_authenticated and item.user != user %}
-                        
-                        <!-- Verifica disponibilità -->
-                        {% if item.is_active %}
-                            <div class="alert alert-success">
-                                <strong>✅ Disponibile</strong>
-                            </div>
-                            
-                            <!-- 💰 PULSANTE ACQUISTA SUBITO -->
-                            {% if item.user.seller_profile and item.user.seller_profile.accepts_payments %}
-                                <a href="{% url 'payments:request_purchase' item.pk %}" 
-                                   class="btn btn-success btn-lg btn-block mb-3">
-                                    💰 Acquista Subito - {{ item.price }}€
-                                </a>
-                                <p class="text-muted small text-center">Pagamento sicuro con Stripe</p>
-                                
-                                <hr>
-                            {% else %}
-                                <!-- Link per creare/configurare il profilo venditore -->
-                                {% if user == item.user %}
-                                    <div class="alert alert-info mb-3">
-                                        <small>
-                                            Per vendere online, 
-                                            <a href="{% url 'payments:seller_setup' %}">configura le tue impostazioni di pagamento</a>
-                                        </small>
-                                    </div>
-                                {% else %}
-                                    <div class="alert alert-warning mb-3">
-                                        <small>⚠️ Questo venditore accetta solo scambi</small>
-                                    </div>
-                                {% endif %}
-                            {% endif %}
-                            
-                            <!-- 🔄 PULSANTE PROPONI SCAMBIO -->
-                            <a href="{% url 'trade:propose' item.pk %}" 
-                               class="btn btn-primary btn-lg btn-block mb-2">
-                                🔄 Proponi Scambio
-                            </a>
-                            <p class="text-muted small text-center">Scambia con un tuo articolo</p>
-                            
-                        {% else %}
-                            <!-- Annuncio non disponibile -->
-                            <div class="alert alert-warning">
-                                <strong>⏳ Non Disponibile</strong>
-                                <p class="mb-0">Questo articolo è già stato venduto o riservato.</p>
-                            </div>
-                        {% endif %}
-                        
-                    {% elif user.is_authenticated and item.user == user %}
-                        <!-- È il tuo annuncio -->
-                        <div class="alert alert-info">
-                            <strong>👤 Il Tuo Annuncio</strong>
-                            <p class="mb-2">Gestisci il tuo annuncio:</p>
-                            <a href="{% url 'django_classified:item-edit' item.pk %}" 
-                               class="btn btn-outline-primary btn-sm">✏️ Modifica</a>
-                        </div>
-                        
-                    {% else %}
-                        <!-- Utente non autenticato -->
-                        <div class="alert alert-warning">
-                            <strong>🔐 Accesso Richiesto</strong>
-                            <p class="mb-2">Per acquistare o proporre scambi devi essere registrato.</p>
-                            <div class="btn-group btn-group-sm" role="group">
-                                <a href="{% url 'login' %}" class="btn btn-primary">Accedi</a>
-                                <a href="{% url 'registration_register' %}" class="btn btn-outline-primary">Registrati</a>
-                            </div>
-                        </div>
-                    {% endif %}
-                </div>
-            </div>
-            
-            <!-- 📊 INFORMAZIONI VENDITORE -->
-            <div class="card mb-3">
-                <div class="card-header">
-                    <h6>👤 Informazioni Venditore</h6>
-                </div>
-                <div class="card-body">
-                    <div class="seller-profile d-flex align-items-center mb-3">
-                        <div class="seller-avatar me-3">
-                            <div class="avatar-circle bg-primary text-white d-flex align-items-center justify-content-center">
-                                {{ item.user.username|first|upper }}
-                            </div>
-                        </div>
-                        <div>
-                            <h6 class="mb-1">{{ item.user.username }}</h6>
-                            {% if item.user.trade_profile %}
-                                <small class="text-muted">
-                                    ⭐ {{ item.user.trade_profile.average_rating|floatformat:1 }}/5
-                                    ({{ item.user.trade_profile.total_feedbacks_received }} recensioni)
-                                </small>
-                            {% endif %}
-                        </div>
-                    </div>
-                    
-                    {% if item.user.seller_profile %}
-                        {% if item.user.seller_profile.total_sales > 0 %}
-                            <div class="row text-center">
-                                <div class="col-6">
-                                    <small class="text-muted">Vendite</small><br>
-                                    <strong>{{ item.user.seller_profile.total_sales }}</strong>
-                                </div>
-                                <div class="col-6">
-                                    <small class="text-muted">Rating</small><br>
-                                    <strong>⭐ {{ item.user.seller_profile.average_rating|floatformat:1 }}/5</strong>
-                                </div>
-                            </div>
-                        {% else %}
-                            <p class="text-muted small">Nuovo venditore</p>
-                        {% endif %}
-                        
-                        <!-- Modalità di pagamento accettate -->
-                        <hr>
-                        <h6 class="small">💳 Pagamenti Accettati:</h6>
-                        {% if item.user.seller_profile.accepts_payments %}
-                            <span class="badge badge-success">✅ Pagamenti Online</span><br>
-                        {% else %}
-                            <span class="badge badge-secondary">❌ Solo Scambi</span><br>
-                        {% endif %}
-                        <span class="badge badge-info">🔄 Baratto</span>
-                        
-                        <!-- Statistiche Scambi -->
-                        {% if item.user.trade_profile %}
-                            <div class="seller-stats mt-2">
-                                <small class="text-muted">
-                                    🔄 {{ item.user.trade_profile.total_trades_completed }} scambi completati
-                                </small>
-                            </div>
-                        {% endif %}
-                    {% endif %}
-                </div>
-            </div>
-            
-            <!-- 📤 CONDIVISIONE SOCIAL -->
-            <div class="card mb-3">
-                <div class="card-header">
-                    <h6>📤 Condividi</h6>
-                </div>
-                <div class="card-body">
-                    <div class="btn-group btn-group-sm btn-block" role="group">
-                        <button type="button" class="btn btn-outline-primary" onclick="shareOnFacebook()">
-                            📘 Facebook
-                        </button>
-                        <button type="button" class="btn btn-outline-info" onclick="shareOnTwitter()">
-                            🐦 Twitter
-                        </button>
-                        <button type="button" class="btn btn-outline-success" onclick="shareOnWhatsApp()">
-                            💚 WhatsApp
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" onclick="copyLink()">
-                            🔗 Link
-                        </button>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- 💡 COME FUNZIONA -->
-            <div class="card">
-                <div class="card-header">
-                    <h6>💡 Come Funziona</h6>
-                </div>
-                <div class="card-body">
-                    <div class="accordion" id="howItWorks">
-                        
-                        <!-- Acquisto -->
-                        {% if item.user.seller_profile.accepts_payments %}
-                        <div class="card border-0">
-                            <div class="card-header p-0" id="headingBuy">
-                                <button class="btn btn-link text-left" type="button" 
-                                        data-toggle="collapse" data-target="#collapseBuy"
-                                        aria-expanded="false" aria-controls="collapseBuy">
-                                    💰 <strong>Acquisto Diretto</strong>
-                                </button>
-                            </div>
-                            <div id="collapseBuy" class="collapse" data-parent="#howItWorks">
-                                <div class="card-body p-2">
-
-<<TRUNCATED FILE: limited to 300 lines>>
-```
-
-
----
-
 ## Git History (last 50 commits)
 
 ```
-* 8c050fd 2025-09-03  (HEAD -> cloudinary, origin/cloudinary) Add Cloudinary integration for image management
+* da7fa16 2025-09-04  (HEAD -> cloudinary, origin/cloudinary) Add project snapshot improvements and update templates
+* 8c050fd 2025-09-03  Add Cloudinary integration for image management
 * 3823529 2025-09-03  (origin/master, origin/HEAD, master) Refactor payments logic and improve Stripe webhook handling
 * 4b9ebf1 2025-09-03  Fix purchase flow and history, improve Stripe webhook
 * 8234b2e 2025-09-03  Enhance payments: active requests, stats, and UX improvements
@@ -3590,9 +808,7 @@ USE_CLOUDINARY_IN_DEV=True</pre>
 | *   6ec458d 2020-05-21  Merge pull request #102 from slyapustin/pyup-update-whitenoise-5.0.1-to-5.1.0
 | |\  
 | | * 2614398 2020-05-20  Update whitenoise from 5.0.1 to 5.1.0
-| |/  
-| *   81ccf2a 2020-05-04  Merge pull request #98 from slyapustin/pyup-update-django-3.0.5-to-3.0.6
-| |\
+| |/
 ```
 
 
@@ -4083,9 +1299,9 @@ USE_CLOUDINARY_IN_DEV=True</pre>
 
 ```html
 {% extends "django_classified/_base.html" %}
-{% load i18n %}
+{% load static i18n %}
 {% comment %}⭐ CARICA CLOUDINARY TAGS SE DISPONIBILI{% endcomment %}
-{% load cloudinary_tags %}
+{% load cloudinary %}
 
 {% block title %}{{ item.title }} - {{ item.price }}€{% endblock %}
 
@@ -4096,8 +1312,9 @@ USE_CLOUDINARY_IN_DEV=True</pre>
     <meta property="og:description" content="{{ item.description|truncatewords:30|striptags }}" />
     {% comment %}⭐ USA CLOUDINARY PER IMMAGINI SOCIAL SE DISPONIBILE{% endcomment %}
     {% if item.image %}
-        {% if CLOUDINARY_CONFIGURED %}
-            <meta property="og:image" content="{% cloudinary_share_image item.image 'large' %}" />
+        {% if USE_CLOUDINARY %}
+            {% cloudinary item.image width=1200 height=630 crop="fill" format="auto" quality="auto:best" as og_image %}
+            <meta property="og:image" content="{{ og_image.url }}" />
         {% else %}
             <meta property="og:image" content="{{ request.build_absolute_uri }}{{ item.image.url }}" />
         {% endif %}
@@ -4128,9 +1345,11 @@ USE_CLOUDINARY_IN_DEV=True</pre>
                     {% for image in item.image_set.all %}
                         <div class="col-md-4 mb-2">
                             {% comment %}⭐ USA CLOUDINARY SE CONFIGURATO, ALTRIMENTI FALLBACK{% endcomment %}
-                            {% if CLOUDINARY_CONFIGURED %}
-                                <a href="{% cloudinary_url image.file 'large' %}" data-lightbox="gallery" data-title="Immagine {{ forloop.counter }}">
-                                    {% cloudinary_img image.file item.title "img-fluid rounded shadow-sm" "medium" %}
+                            {% if USE_CLOUDINARY %}
+                                {% cloudinary image.file width=800 height=600 crop="fit" format="auto" quality="auto:best" as large_image %}
+                                {% cloudinary image.file width=400 height=300 crop="fill" format="auto" quality="auto:good" as medium_image %}
+                                <a href="{{ large_image.url }}" data-lightbox="gallery" data-title="Immagine {{ forloop.counter }}">
+                                    <img src="{{ medium_image.url }}" alt="{{ item.title }}" class="img-fluid rounded shadow-sm" loading="lazy">
                                 </a>
                             {% else %}
                                 <a href="{{ image.file.url }}" data-lightbox="gallery">
@@ -4144,9 +1363,10 @@ USE_CLOUDINARY_IN_DEV=True</pre>
             {% elif item.image %}
                 <!-- Immagine singola principale -->
                 <div class="main-image-container mb-4">
-                    {% if CLOUDINARY_CONFIGURED %}
-                        <a href="{% cloudinary_url item.image 'large' %}" data-lightbox="main-image">
-                            {% cloudinary_img item.image item.title "img-fluid rounded shadow-lg" "large" %}
+                    {% if USE_CLOUDINARY %}
+                        {% cloudinary item.image width=800 height=600 crop="fit" format="auto" quality="auto:best" as large_image %}
+                        <a href="{{ large_image.url }}" data-lightbox="main-image">
+                            <img src="{{ large_image.url }}" alt="{{ item.title }}" class="img-fluid rounded shadow-lg" loading="lazy">
                         </a>
                     {% else %}
                         <a href="{{ item.image.url }}" data-lightbox="main-image">
@@ -4267,7 +1487,7 @@ USE_CLOUDINARY_IN_DEV=True</pre>
                     {% else %}
                         <!-- Utente non autenticato -->
                         <div class="alert alert-warning">
-                            <strong>🔐 Accesso Richiesto</strong>
+                            <strong>🔒 Accesso Richiesto</strong>
                             <p class="mb-2">Per acquistare o proporre scambi devi essere registrato.</p>
                             <div class="btn-group btn-group-sm" role="group">
                                 <a href="{% url 'login' %}" class="btn btn-primary">Accedi</a>
@@ -4378,10 +1598,6 @@ USE_CLOUDINARY_IN_DEV=True</pre>
                                         data-toggle="collapse" data-target="#collapseBuy"
                                         aria-expanded="false" aria-controls="collapseBuy">
                                     💰 <strong>Acquisto Diretto</strong>
-                                </button>
-                            </div>
-                            <div id="collapseBuy" class="collapse" data-parent="#howItWorks">
-                                <div class="card-body p-2">
 
 <<TRUNCATED FILE: limited to 300 lines>>
 ```
@@ -4998,5 +2214,2789 @@ window.onload = function() {
         }
     }, 5000);
 };
+
+// Funzione per stampare la ricevuta
+function printReceipt() {
+    window.print();
+}
+</script>
+
+<!-- Print Button (nascosto di default) -->
+<div class="d-print-none text-center mb-4">
+    <button onclick="printReceipt()" class="btn btn-outline-secondary">
+        🖨️ Stampa Ricevuta
+    </button>
+</div>
+
+<!-- Stile per la stampa -->
+<style>
+@media print {
+    .btn, .card-header, .alert-warning {
+        -webkit-print-color-adjust: exact !important;
+        color-adjust: exact !important;
+    }
+    
+    .d-print-none {
+        display: none !important;
+    }
+}
+</style>
+{% endblock %}
+```
+
+
+### templates/payments/purchase_history.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}I Miei Acquisti{% endblock %}
+
+{% block body %}
+<div class="container">
+    <h3>💰 I Miei Acquisti</h3>
+    
+    <!-- Statistiche Riepilogo -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card border-primary">
+                <div class="card-body text-center">
+                    <h4 class="text-primary">{{ pending_requests_count|default:0 }}</h4>
+                    <p class="text-muted mb-0">Richieste Pendenti</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-success">
+                <div class="card-body text-center">
+                    <h4 class="text-success">{{ approved_requests_count|default:0 }}</h4>
+                    <p class="text-muted mb-0">Richieste Approvate</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-info">
+                <div class="card-body text-center">
+                    <h4 class="text-info">{{ completed_purchases|default:0 }}</h4>
+                    <p class="text-muted mb-0">Acquisti Completati</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-dark">
+                <div class="card-body text-center">
+                    <h4 class="text-dark">€{{ total_spent|floatformat:2 }}</h4>
+                    <p class="text-muted mb-0">Totale Speso</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <ul class="nav nav-tabs mb-4">
+        <li class="nav-item">
+            <a class="nav-link active" data-toggle="tab" href="#active-requests">
+                🔄 Richieste Attive 
+                {% if active_requests %}
+                    <span class="badge badge-warning">{{ active_requests|length }}</span>
+                {% endif %}
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-toggle="tab" href="#completed-purchases">
+                ✅ Acquisti Completati
+                {% if transactions %}
+                    <span class="badge badge-info">{{ transactions|length }}</span>
+                {% endif %}
+            </a>
+        </li>
+    </ul>
+
+    <!-- Tab Content -->
+    <div class="tab-content">
+        
+        <!-- Richieste Attive Tab -->
+        <div class="tab-pane fade show active" id="active-requests">
+            {% if active_requests %}
+                <div class="alert alert-info">
+                    <h6>ℹ️ Richieste in Corso</h6>
+                    <p class="mb-0">Queste sono le tue richieste di acquisto che stanno ancora aspettando una risposta o il pagamento.</p>
+                </div>
+                
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead class="thead-light">
+                            <tr>
+                                <th>Articolo</th>
+                                <th>Venditore</th>
+                                <th>Prezzo</th>
+                                <th>Stato</th>
+                                <th>Creata il</th>
+                                <th>Scade il</th>
+                                <th>Azioni</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for request in active_requests %}
+                            <tr>
+                                <td>
+                                    <strong>{{ request.item.title|truncatechars:40 }}</strong>
+                                    {% if request.item.image_set.first %}
+                                        <br><small class="text-muted">📷 Con immagine</small>
+                                    {% endif %}
+                                </td>
+                                <td>{{ request.seller.username }}</td>
+                                <td><strong>€{{ request.item.price|floatformat:0 }}</strong></td>
+                                <td>
+                                    {% if request.status == 'pending' %}
+                                        <span class="badge badge-warning">⏳ In Attesa</span>
+                                    {% elif request.status == 'approved' %}
+                                        <span class="badge badge-success">✅ Approvata</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ request.created_at|date:"d/m/Y" }}</td>
+                                <td>
+                                    {% if request.is_expired %}
+                                        <span class="badge badge-danger">Scaduta</span>
+                                    {% else %}
+                                        {{ request.expires_at|date:"d/m/Y" }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <a href="{% url 'payments:request_detail' request.uuid %}" 
+                                           class="btn btn-info btn-sm">👁️ Dettagli</a>
+                                        
+                                        {% if request.status == 'approved' %}
+                                            {% if request.payment_transaction %}
+                                                {% if request.payment_transaction.status == 'processing' %}
+                                                    <a href="{% url 'payments:payment_success' request.payment_transaction.uuid %}" 
+                                                       class="btn btn-warning btn-sm">
+                                                        ⏳ In Elaborazione
+                                                    </a>
+                                                {% elif request.payment_transaction.status == 'succeeded' %}
+                                                    <a href="{% url 'payments:payment_success' request.payment_transaction.uuid %}" 
+                                                       class="btn btn-success btn-sm">
+                                                        ✅ Completato
+                                                    </a>
+                                                {% else %}
+                                                    <form method="post" action="{% url 'payments:create_checkout' request.uuid %}" style="display:inline;">
+                                                        {% csrf_token %}
+                                                        <button type="submit" class="btn btn-success btn-sm">
+                                                            💳 Paga Ora
+                                                        </button>
+                                                    </form>
+                                                {% endif %}
+                                            {% else %}
+                                                <form method="post" action="{% url 'payments:create_checkout' request.uuid %}" style="display:inline;">
+                                                    {% csrf_token %}
+                                                    <button type="submit" class="btn btn-success btn-sm">
+                                                        💳 Paga Ora
+                                                    </button>
+                                                </form>
+                                            {% endif %}
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-secondary">
+                    <h4>📭 Nessuna Richiesta Attiva</h4>
+                    <p>Non hai richieste di acquisto in corso.</p>
+                    <a href="{% url 'django_classified:index' %}" class="btn btn-primary">🛍️ Sfoglia Annunci</a>
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- Acquisti Completati Tab -->
+        <div class="tab-pane fade" id="completed-purchases">
+            {% if transactions %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead class="thead-dark">
+                            <tr>
+                                <th>Data</th>
+                                <th>Articolo</th>
+                                <th>Venditore</th>
+                                <th>Importo</th>
+                                <th>Stato</th>
+                                <th>Azioni</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for transaction in transactions %}
+                            <tr>
+                                <td>{{ transaction.created_at|date:"d/m/Y H:i" }}</td>
+                                <td>
+                                    <strong>{{ transaction.item.title|truncatechars:30 }}</strong>
+                                    <br><small class="text-muted">#{{ transaction.uuid|slice:":8" }}</small>
+                                </td>
+                                <td>{{ transaction.seller.username }}</td>
+                                <td><strong>€{{ transaction.total_amount_euros|floatformat:2 }}</strong></td>
+                                <td>
+                                    {% if transaction.status == 'succeeded' %}
+                                        <span class="badge badge-success">✅ Completato</span>
+                                    {% elif transaction.status == 'processing' %}
+                                        <span class="badge badge-warning">⏳ In Elaborazione</span>
+                                    {% elif transaction.status == 'pending' %}
+                                        <span class="badge badge-info">⏸️ In Attesa</span>
+                                    {% elif transaction.status == 'failed' %}
+                                        <span class="badge badge-danger">❌ Fallito</span>
+                                    {% elif transaction.status == 'cancelled' %}
+                                        <span class="badge badge-secondary">🚫 Annullato</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <a href="{% url 'payments:payment_success' transaction.uuid %}" 
+                                           class="btn btn-secondary btn-sm">📋 Dettagli</a>
+                                        
+                                        {% if transaction.status == 'succeeded' %}
+                                            <span class="btn btn-success btn-sm disabled">✅ Pagato</span>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Paginazione -->
+                {% if is_paginated %}
+                <div class="text-center">
+                    <div class="pagination">
+                        {% if page_obj.has_previous %}
+                            <a href="?page={{ page_obj.previous_page_number }}">&laquo; Precedente</a>
+                        {% endif %}
+                        
+                        Pagina {{ page_obj.number }} di {{ page_obj.paginator.num_pages }}
+                        
+                        {% if page_obj.has_next %}
+                            <a href="?page={{ page_obj.next_page_number }}">Successiva &raquo;</a>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+                
+            {% else %}
+                <div class="alert alert-secondary">
+                    <h4>📭 Nessun Acquisto Completato</h4>
+                    <p>Non hai ancora completato acquisti tramite pagamento.</p>
+                    <a href="{% url 'django_classified:index' %}" class="btn btn-primary">🛍️ Inizia a Comprare</a>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Link Utili -->
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card border-light">
+                <div class="card-body">
+                    <h6>🔗 Link Utili</h6>
+                    <div class="btn-group">
+                        <a href="{% url 'payments:seller_setup' %}" class="btn btn-outline-primary">
+                            ⚙️ Impostazioni Venditore
+                        </a>
+                        <a href="{% url 'payments:sales_history' %}" class="btn btn-outline-success">
+                            💸 Le Mie Vendite
+                        </a>
+                        <a href="{% url 'django_classified:index' %}" class="btn btn-outline-info">
+                            🏠 Torna alla Home
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Auto-refresh richieste ogni 30 secondi se ci sono richieste attive
+{% if active_requests %}
+setTimeout(function() {
+    location.reload();
+}, 30000);
+{% endif %}
+
+// Tab switching con Bootstrap
+$(document).ready(function(){
+    $('.nav-tabs a').click(function(e) {
+        e.preventDefault();
+        $(this).tab('show');
+    });
+});
+</script>
+{% endblock %}
+```
+
+
+### templates/payments/request_detail.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Richiesta #{{ purchase_request.uuid.hex|slice:":8" }}{% endblock %}
+
+{% block body %}
+<div class="container">
+    <div class="row">
+        <div class="col-md-12">
+            <!-- Header con stato -->
+            <div class="card mb-4">
+                <div class="card-header 
+                    {% if purchase_request.status == 'pending' %}bg-warning
+                    {% elif purchase_request.status == 'approved' %}bg-success text-white
+                    {% elif purchase_request.status == 'rejected' %}bg-danger text-white
+                    {% elif purchase_request.status == 'completed' %}bg-info text-white
+                    {% elif purchase_request.status == 'expired' %}bg-secondary text-white
+                    {% endif %}">
+                    
+                    <div class="row">
+                        <div class="col-md-8">
+                            <h4>
+                                {% if purchase_request.status == 'pending' %}⏳ In Attesa di Approvazione
+                                {% elif purchase_request.status == 'approved' %}✅ Richiesta Approvata
+                                {% elif purchase_request.status == 'rejected' %}❌ Richiesta Rifiutata
+                                {% elif purchase_request.status == 'completed' %}🎉 Acquisto Completato
+                                {% elif purchase_request.status == 'expired' %}⌛ Richiesta Scaduta
+                                {% endif %}
+                            </h4>
+                            <p class="mb-0">Richiesta #{{ purchase_request.uuid.hex|slice:":8" }}</p>
+                        </div>
+                        <div class="col-md-4 text-right">
+                            <p class="mb-1"><strong>Data:</strong> {{ purchase_request.created_at|date:"d/m/Y H:i" }}</p>
+                            {% if purchase_request.expires_at %}
+                                <p class="mb-0"><strong>Scade:</strong> {{ purchase_request.expires_at|date:"d/m/Y H:i" }}</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="row">
+                <!-- Dettagli richiesta -->
+                <div class="col-md-8">
+                    <!-- Informazioni articolo -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h5>🎮 Articolo Richiesto</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    {% if purchase_request.item.image_set.first %}
+                                        <img src="{{ purchase_request.item.image_set.first.file.url }}" 
+                                             alt="{{ purchase_request.item.title }}" 
+                                             class="img-fluid rounded">
+                                    {% else %}
+                                        <div class="bg-light p-3 text-center rounded">
+                                            <span class="text-muted">Nessuna immagine</span>
+                                        </div>
+                                    {% endif %}
+                                </div>
+                                <div class="col-md-9">
+                                    <h6>{{ purchase_request.item.title }}</h6>
+                                    <p class="text-muted">{{ purchase_request.item.description|truncatewords:20 }}</p>
+                                    <p><strong>Prezzo:</strong> €{{ purchase_request.item.price }}</p>
+                                    <p>
+                                        <a href="{{ purchase_request.item.get_absolute_url }}" 
+                                           class="btn btn-outline-primary btn-sm">
+                                            👁️ Vedi Annuncio Completo
+                                        </a>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Informazioni partecipanti -->
+                    <div class="row">
+                        <!-- Acquirente -->
+                        <div class="col-md-6">
+                            <div class="card mb-3 {% if is_buyer %}border-primary{% endif %}">
+                                <div class="card-header {% if is_buyer %}bg-primary text-white{% endif %}">
+                                    <h6>🛒 Acquirente</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>{{ purchase_request.buyer.username }}</strong>
+                                        {% if is_buyer %}<span class="badge badge-primary ml-2">Tu</span>{% endif %}
+                                    </p>
+                                    <p>📧 {{ purchase_request.buyer.email }}</p>
+                                    <p>🚚 {{ purchase_request.get_delivery_method_display }}</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Venditore -->
+                        <div class="col-md-6">
+                            <div class="card mb-3 {% if is_seller %}border-success{% endif %}">
+                                <div class="card-header {% if is_seller %}bg-success text-white{% endif %}">
+                                    <h6>🏪 Venditore</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>{{ purchase_request.seller.username }}</strong>
+                                        {% if is_seller %}<span class="badge badge-success ml-2">Tu</span>{% endif %}
+                                    </p>
+                                    {% if purchase_request.seller.seller_profile %}
+                                        <p>📊 {{ purchase_request.seller.seller_profile.total_sales }} vendite</p>
+                                        <p>⭐ {{ purchase_request.seller.seller_profile.average_rating|floatformat:1 }}/5</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Indirizzo di spedizione -->
+                    {% if purchase_request.shipping_address %}
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>📍 Indirizzo di Spedizione</h6>
+                        </div>
+                        <div class="card-body">
+                            <address>{{ purchase_request.shipping_address|linebreaks }}</address>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Messaggio dell'acquirente -->
+                    {% if purchase_request.message %}
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>💬 Messaggio dell'Acquirente</h6>
+                        </div>
+                        <div class="card-body">
+                            {{ purchase_request.message|linebreaks }}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <!-- Sidebar - Azioni -->
+                <div class="col-md-4">
+                    <!-- Riepilogo costi -->
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>💳 Riepilogo Costi</h6>
+                        </div>
+                        <div class="card-body">
+                            <table class="table table-sm">
+                                <tbody>
+                                    <tr>
+                                        <td>Prezzo articolo:</td>
+                                        <td class="text-right"><strong>€{{ fees.item_price_euros|floatformat:2 }}</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Commissione piattaforma (3%):</td>
+                                        <td class="text-right">€{{ fees.platform_fee_euros|floatformat:2 }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Commissione Stripe:</td>
+                                        <td class="text-right">€{{ fees.stripe_fee_euros|floatformat:2 }}</td>
+                                    </tr>
+                                    <tr class="table-success">
+                                        <td><strong>Totale da pagare:</strong></td>
+                                        <td class="text-right"><strong>€{{ fees.total_amount_euros|floatformat:2 }}</strong></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- Azioni disponibili -->
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>⚡ Azioni Disponibili</h6>
+                        </div>
+                        <div class="card-body">
+                            
+                            <!-- SE LA RICHIESTA È PENDENTE -->
+                            {% if purchase_request.status == 'pending' %}
+                                {% if is_seller and can_approve %}
+                                    <div class="alert alert-warning p-2 mb-3">
+                                        <small><strong>⏳ Richiesta in attesa della tua approvazione</strong></small>
+                                    </div>
+                                    
+                                    <div class="btn-group-vertical btn-group-block">
+                                        <form method="post" action="{% url 'payments:process_request' purchase_request.uuid 'approve' %}" style="display:inline;">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-success btn-block mb-2"
+                                                    onclick="return confirm('✅ Approvare questa richiesta di acquisto?')">
+                                                ✅ Approva Richiesta
+                                            </button>
+                                        </form>
+                                        
+                                        <form method="post" action="{% url 'payments:process_request' purchase_request.uuid 'reject' %}" style="display:inline;">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-outline-danger btn-block"
+                                                    onclick="return confirm('❌ Rifiutare questa richiesta di acquisto?')">
+                                                ❌ Rifiuta
+                                            </button>
+                                        </form>
+                                    </div>
+                                    
+                                {% elif is_buyer %}
+                                    <div class="alert alert-info p-2 mb-3">
+                                        <small><strong>⏳ In attesa di approvazione dal venditore</strong></small>
+                                    </div>
+                                    <p class="text-muted small">Il venditore {{ purchase_request.seller.username }} riceverà una notifica e potrà approvare o rifiutare la richiesta.</p>
+                                {% endif %}
+                            
+                            <!-- SE LA RICHIESTA È APPROVATA -->
+                            {% elif purchase_request.status == 'approved' %}
+                                {% if is_buyer %}
+                                    <div class="alert alert-success p-2 mb-3">
+                                        <small><strong>✅ Richiesta approvata!</strong></small>
+                                    </div>
+                                    
+                                    <!-- CONTROLLO TRANSAZIONE ESISTENTE -->
+                                    {% if not purchase_request.payment_transaction %}
+                                        <!-- NESSUNA TRANSAZIONE: MOSTRA PULSANTE PAGAMENTO -->
+                                        <form method="post" action="{% url 'payments:create_checkout' purchase_request.uuid %}">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-success btn-lg btn-block mb-3">
+                                                💳 Procedi al Pagamento
+                                                <br><small>€{{ fees.total_amount_euros|floatformat:2 }}</small>
+                                            </button>
+                                        </form>
+                                        
+                                        <div class="alert alert-info p-2">
+                                            <small>
+                                                <strong>🛡️ Pagamento Sicuro</strong><br>
+                                                Sarai reindirizzato a Stripe per completare il pagamento in sicurezza.
+                                            </small>
+                                        </div>
+                                        
+                                    {% elif purchase_request.payment_transaction.status == 'pending' %}
+                                        <!-- TRANSAZIONE CREATA MA NON PAGATA -->
+                                        <div class="alert alert-warning p-2 mb-3">
+                                            <small><strong>⏳ Transazione creata</strong><br>Completa il pagamento per finalizzare l'acquisto.</small>
+                                        </div>
+                                        
+                                        <form method="post" action="{% url 'payments:create_checkout' purchase_request.uuid %}">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-success btn-lg btn-block">
+                                                💳 Completa Pagamento
+                                                <br><small>€{{ fees.total_amount_euros|floatformat:2 }}</small>
+                                            </button>
+                                        </form>
+                                        
+                                    {% elif purchase_request.payment_transaction.status == 'processing' %}
+                                        <!-- PAGAMENTO IN ELABORAZIONE -->
+                                        <div class="alert alert-info p-2 mb-3">
+                                            <small><strong>🔄 Pagamento in elaborazione</strong><br>Il pagamento è stato ricevuto ed è in elaborazione.</small>
+                                        </div>
+                                        
+                                        <a href="{{ purchase_request.payment_transaction.get_absolute_url }}" class="btn btn-outline-info btn-block">
+                                            👁️ Vedi Dettagli Transazione
+                                        </a>
+                                        
+                                    {% elif purchase_request.payment_transaction.status == 'succeeded' %}
+                                        <!-- PAGAMENTO COMPLETATO -->
+                                        <div class="alert alert-success p-2 mb-3">
+                                            <small><strong>🎉 Pagamento completato!</strong><br>L'acquisto è stato finalizzato con successo.</small>
+                                        </div>
+                                        
+                                        <a href="{{ purchase_request.payment_transaction.get_absolute_url }}" class="btn btn-success btn-block">
+                                            📄 Vedi Ricevuta
+                                        </a>
+                                    {% endif %}
+                                    
+                                {% elif is_seller %}
+                                    <div class="alert alert-success p-2 mb-3">
+                                        <small><strong>✅ Hai approvato questa richiesta</strong></small>
+                                    </div>
+                                    <p class="text-muted small">L'acquirente può ora procedere al pagamento.</p>
+                                    
+                                    {% if purchase_request.payment_transaction %}
+                                        <a href="{{ purchase_request.payment_transaction.get_absolute_url }}" class="btn btn-outline-info btn-block">
+                                            👁️ Stato Pagamento
+                                        </a>
+                                    {% endif %}
+                                {% endif %}
+                            
+                            <!-- SE LA RICHIESTA È RIFIUTATA -->
+                            {% elif purchase_request.status == 'rejected' %}
+                                <div class="alert alert-danger p-2 mb-3">
+                                    <small><strong>❌ Richiesta rifiutata</strong></small>
+                                </div>
+                                {% if is_buyer %}
+                                    <p class="text-muted small">Il venditore ha rifiutato la richiesta. Puoi provare con un altro articolo.</p>
+                                    <a href="{% url 'django_classified:index' %}" class="btn btn-primary btn-block">
+                                        🔍 Cerca Altri Articoli
+                                    </a>
+                                {% endif %}
+                            
+                            <!-- SE LA RICHIESTA È COMPLETATA -->
+                            {% elif purchase_request.status == 'completed' %}
+                                <div class="alert alert-success p-2 mb-3">
+                                    <small><strong>🎉 Acquisto completato!</strong></small>
+                                </div>
+                                
+
+<<TRUNCATED FILE: limited to 300 lines>>
+```
+
+
+### templates/payments/request_purchase.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n widget_tweaks %}
+
+{% block title %}Richiesta di Acquisto{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 800px;">
+    <h3>🛒 Richiesta di Acquisto</h3>
+    
+    <!-- Dettagli Articolo -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5>📦 Articolo Selezionato</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4">
+                            {% if item.image_set.first %}
+                                <img src="{{ item.image_set.first.file.url }}" 
+                                     alt="{{ item.title }}" 
+                                     class="img-fluid rounded">
+                            {% else %}
+                                <div class="bg-light p-4 text-center rounded">
+                                    <span class="text-muted">📷 Nessuna Immagine</span>
+                                </div>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-8">
+                            <h4>{{ item.title }}</h4>
+                            <p><strong>Venditore:</strong> {{ item.user.username }}</p>
+                            <p><strong>Prezzo:</strong> <span class="text-success">€{{ item.price|floatformat:0 }}</span></p>
+                            {% if item.description %}
+                                <p><strong>Descrizione:</strong></p>
+                                <p class="text-muted">{{ item.description|truncatewords:30 }}</p>
+                            {% endif %}
+                            <a href="{{ item.get_absolute_url }}" class="btn btn-outline-info btn-sm" target="_blank">
+                                👁️ Vedi Annuncio Completo
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Riepilogo Costi -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5>💰 Riepilogo Costi</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>Prezzo articolo:</span>
+                                <span>€{{ fees.item_price_cents|floatformat:2 }}</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>Commissione piattaforma (3%):</span>
+                                <span>€{{ fees.platform_fee_cents|floatformat:2 }}</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>Commissione Stripe:</span>
+                                <span>€{{ fees.stripe_fee_cents|floatformat:2 }}</span>
+                            </div>
+                            <hr>
+                            <div class="d-flex justify-content-between">
+                                <strong>Totale che pagherai:</strong>
+                                <strong class="text-primary">€{{ total_euros|floatformat:2 }}</strong>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="alert alert-info">
+                                <small>
+                                    <strong>ℹ️ Commissioni:</strong><br>
+                                    Le commissioni servono per mantenere la piattaforma sicura e garantire transazioni protette.
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Form Richiesta -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>📝 Dettagli della Richiesta</h5>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        
+                        <!-- Messaggio al venditore -->
+                        <div class="form-group">
+                            <label for="{{ form.message.id_for_label }}">💬 Messaggio al Venditore (opzionale):</label>
+                            {{ form.message|add_class:"form-control" }}
+                            {% if form.message.errors %}
+                                <div class="text-danger">{{ form.message.errors }}</div>
+                            {% endif %}
+                            <small class="form-text text-muted">
+                                Presentati e specifica eventuali domande sull'articolo
+                            </small>
+                        </div>
+
+                        <!-- Metodo di consegna -->
+                        <div class="form-group">
+                            <label for="{{ form.delivery_method.id_for_label }}">🚚 Metodo di Consegna Preferito:</label>
+                            {{ form.delivery_method|add_class:"form-control" }}
+                            {% if form.delivery_method.errors %}
+                                <div class="text-danger">{{ form.delivery_method.errors }}</div>
+                            {% endif %}
+                            <small class="form-text text-muted">Come preferisci ricevere l'articolo?</small>
+                        </div>
+
+                        <!-- Indirizzo di spedizione -->
+                        <div class="form-group" id="shipping-address-group">
+                            <label for="{{ form.shipping_address.id_for_label }}">📍 Indirizzo di Spedizione:</label>
+                            {{ form.shipping_address|add_class:"form-control" }}
+                            {% if form.shipping_address.errors %}
+                                <div class="text-danger">{{ form.shipping_address.errors }}</div>
+                            {% endif %}
+                            <small class="form-text text-muted">
+                                Necessario solo se scegli "Spedizione" o "Entrambi"
+                            </small>
+                        </div>
+
+                        <!-- Processo di acquisto -->
+                        <div class="alert alert-info">
+                            <h6>ℹ️ Come Funziona il Processo</h6>
+                            <ol>
+                                <li><strong>Invii la richiesta</strong> al venditore con i tuoi dettagli</li>
+                                <li><strong>Il venditore esamina</strong> la tua richiesta (può approvare o rifiutare)</li>
+                                <li><strong>Se approvata:</strong> ricevi notifica e puoi procedere al pagamento</li>
+                                <li><strong>Dopo il pagamento:</strong> coordinate consegna/ritiro con il venditore</li>
+                            </ol>
+                        </div>
+
+                        <!-- Bottoni -->
+                        <div class="text-center">
+                            <button type="submit" class="btn btn-success btn-lg">
+                                📤 Invia Richiesta di Acquisto
+                            </button>
+                            <a href="{{ item.get_absolute_url }}" class="btn btn-secondary btn-lg">
+                                ❌ Annulla
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Info Venditore -->
+    {% if seller_profile %}
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card border-success">
+                <div class="card-header bg-success text-white">
+                    <h6>👤 Informazioni Venditore</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p><strong>Username:</strong> {{ item.user.username }}</p>
+                            <p><strong>Accetta pagamenti:</strong> 
+                                {% if seller_profile.accepts_payments %}
+                                    <span class="badge badge-success">✅ Sì</span>
+                                {% else %}
+                                    <span class="badge badge-danger">❌ No</span>
+                                {% endif %}
+                            </p>
+                        </div>
+                        <div class="col-md-6">
+                            {% if seller_profile.total_sales > 0 %}
+                            <p><strong>Vendite completate:</strong> {{ seller_profile.total_sales }}</p>
+                            <p><strong>Rating:</strong> 
+                                {% if seller_profile.average_rating > 0 %}
+                                    {{ seller_profile.average_rating|floatformat:1 }}/5 ⭐
+                                {% else %}
+                                    <span class="text-muted">Nessuna valutazione</span>
+                                {% endif %}
+                            </p>
+                            {% else %}
+                            <p class="text-muted">Nuovo venditore sulla piattaforma</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+// Mostra/nascondi indirizzo basato sul metodo di consegna
+document.addEventListener('DOMContentLoaded', function() {
+    const deliveryMethod = document.getElementById('id_delivery_method');
+    const shippingGroup = document.getElementById('shipping-address-group');
+    
+    function toggleShippingAddress() {
+        const value = deliveryMethod.value;
+        if (value === 'shipping' || value === 'both') {
+            shippingGroup.style.display = 'block';
+            document.getElementById('id_shipping_address').setAttribute('required', 'required');
+        } else {
+            shippingGroup.style.display = 'none';
+            document.getElementById('id_shipping_address').removeAttribute('required');
+        }
+    }
+    
+    // Chiamata iniziale
+    toggleShippingAddress();
+    
+    // Ascolta cambiamenti
+    deliveryMethod.addEventListener('change', toggleShippingAddress);
+});
+</script>
+{% endblock %}
+```
+
+
+### templates/payments/sales_history.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Le Mie Vendite{% endblock %}
+
+{% block body %}
+<div class="container">
+    <h3>💸 Le Mie Vendite</h3>
+    
+    {% if transactions %}
+        <!-- Statistiche Vendite -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card bg-success text-white">
+                    <div class="card-body text-center">
+                        <h4>{{ transactions|length }}</h4>
+                        <p class="mb-0">Vendite Totali</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-info text-white">
+                    <div class="card-body text-center">
+                        <h4>{{ transactions|dictsort:"status"|dictsortreversed:"succeeded"|length }}</h4>
+                        <p class="mb-0">Completate</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-warning text-white">
+                    <div class="card-body text-center">
+                        <h4>€0.00</h4>
+                        <p class="mb-0">Ricavi Netti*</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-primary text-white">
+                    <div class="card-body text-center">
+                        <h4>⭐ 5.0</h4>
+                        <p class="mb-0">Rating Medio</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lista Vendite -->
+        <div class="card">
+            <div class="card-header">
+                <h5>📋 Cronologia Vendite</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Data</th>
+                                <th>Articolo</th>
+                                <th>Acquirente</th>
+                                <th>Importi</th>
+                                <th>Stato</th>
+                                <th>Azioni</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for transaction in transactions %}
+                            <tr>
+                                <td>{{ transaction.created_at|date:"d/m/Y H:i" }}</td>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        {% if transaction.item.image_set.first %}
+                                            <img src="{{ transaction.item.image_set.first.file.url }}" 
+                                                 alt="{{ transaction.item.title }}" 
+                                                 class="mr-2 rounded" style="width: 40px; height: 40px; object-fit: cover;">
+                                        {% endif %}
+                                        <div>
+                                            <strong>{{ transaction.item.title|truncatechars:25 }}</strong>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <strong>{{ transaction.buyer.username }}</strong>
+                                    <br><small class="text-muted">{{ transaction.buyer_email }}</small>
+                                </td>
+                                <td>
+                                    <strong>€{{ transaction.item_price_euros|floatformat:2 }}</strong>
+                                    <br><small class="text-muted">
+                                        Totale pagato: €{{ transaction.total_amount_euros|floatformat:2 }}<br>
+                                        <span class="text-danger">Commissioni: -€{{ transaction.platform_fee_euros|add:transaction.stripe_fee_euros|floatformat:2 }}</span>
+                                    </small>
+                                </td>
+                                <td>
+                                    {% if transaction.status == 'pending' %}
+                                        <span class="badge badge-warning">⏳ In Attesa</span>
+                                    {% elif transaction.status == 'processing' %}
+                                        <span class="badge badge-info">🔄 In Elaborazione</span>
+                                    {% elif transaction.status == 'succeeded' %}
+                                        <span class="badge badge-success">✅ Completata</span>
+                                    {% elif transaction.status == 'failed' %}
+                                        <span class="badge badge-danger">❌ Fallita</span>
+                                    {% elif transaction.status == 'cancelled' %}
+                                        <span class="badge badge-secondary">🚫 Annullata</span>
+                                    {% elif transaction.status == 'refunded' %}
+                                        <span class="badge badge-warning">💸 Rimborsata</span>
+                                    {% endif %}
+                                    
+                                    {% if transaction.completed_at %}
+                                        <br><small class="text-muted">{{ transaction.completed_at|date:"d/m/Y" }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group-vertical btn-group-sm">
+                                        <a href="{{ transaction.get_absolute_url }}" class="btn btn-outline-info btn-sm">
+                                            👁️ Dettagli
+                                        </a>
+                                        
+                                        {% if transaction.shipping_address %}
+                                            <button class="btn btn-outline-warning btn-sm" 
+                                                    title="Spedire a: {{ transaction.shipping_address|truncatechars:50 }}"
+                                                    data-toggle="tooltip">
+                                                📦 Spedizione
+                                            </button>
+                                        {% endif %}
+                                        
+                                        {% if transaction.status == 'succeeded' %}
+                                            <a href="mailto:{{ transaction.buyer_email }}" class="btn btn-outline-primary btn-sm">
+                                                ✉️ Contatta
+                                            </a>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    {% else %}
+        <!-- Stato Vuoto -->
+        <div class="jumbotron text-center">
+            <h4>💸 Nessuna Vendita Ancora</h4>
+            <p class="lead">Non hai ancora ricevuto pagamenti per i tuoi annunci.</p>
+            <hr class="my-4">
+            <p>Inizia a vendere attivando i pagamenti nei tuoi annunci!</p>
+            <div class="btn-group">
+                <a class="btn btn-success btn-lg" href="{% url 'payments:seller_setup' %}">⚙️ Configura Vendite</a>
+                <a class="btn btn-primary btn-lg" href="{% url 'django_classified:item-new' %}">📝 Nuovo Annuncio</a>
+            </div>
+        </div>
+    {% endif %}
+
+    <!-- Sezione Consigli per Venditori -->
+    <div class="card mt-4 border-success">
+        <div class="card-header bg-success text-white">
+            <h6>💡 Consigli per Vendere Meglio</h6>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>📸 Foto di Qualità</h6>
+                    <p class="small text-muted">Usa foto chiare e ben illuminate per attirare più acquirenti</p>
+                    
+                    <h6>📝 Descrizioni Dettagliate</h6>
+                    <p class="small text-muted">Descrivi accuratamente condizioni e dettagli dell'articolo</p>
+                </div>
+                <div class="col-md-6">
+                    <h6>⚡ Risposte Rapide</h6>
+                    <p class="small text-muted">Rispondi velocemente alle richieste di acquisto</p>
+                    
+                    <h6>📦 Spedizioni Veloci</h6>
+                    <p class="small text-muted">Spedisci entro 1-2 giorni lavorativi per ottenere feedback positivi</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Commissioni Info -->
+    <div class="alert alert-warning mt-4">
+        <h6>💰 Informazioni Commissioni</h6>
+        <p class="mb-0">
+            <strong>Commissione Piattaforma:</strong> 3% del prezzo dell'articolo<br>
+            <strong>Commissione Stripe:</strong> 1.4% + €0.25 per transazione<br>
+            <small class="text-muted">Le commissioni vengono detratte automaticamente dal pagamento dell'acquirente prima del trasferimento</small>
+        </p>
+    </div>
+
+    <!-- Link navigazione -->
+    <div class="text-center mt-4">
+        <a href="{% url 'django_classified:index' %}" class="btn btn-secondary">🏠 Torna alla Home</a>
+        <a href="{% url 'payments:purchase_history' %}" class="btn btn-outline-info">🛍️ I Miei Acquisti</a>
+        <a href="{% url 'payments:seller_setup' %}" class="btn btn-outline-success">⚙️ Configurazione</a>
+    </div>
+</div>
+
+<!-- Script per tooltip -->
+<script>
+$(function () {
+    $('[data-toggle="tooltip"]').tooltip()
+})
+</script>
+{% endblock %}
+```
+
+
+### templates/payments/seller_requests.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Richieste di Acquisto Ricevute{% endblock %}
+
+{% block body %}
+<div class="container">
+    <div class="row">
+        <div class="col-md-12">
+            <h3>🏪 Richieste di Acquisto Ricevute</h3>
+            
+            {% if pending_count > 0 %}
+                <div class="alert alert-warning">
+                    <strong>⚠️ {{ pending_count }} richiesta{{ pending_count|pluralize:"," }} in attesa di approvazione</strong>
+                </div>
+            {% endif %}
+            
+            {% if requests %}
+                {% for request in requests %}
+                <div class="card mb-4 {% if request.status == 'pending' %}border-warning{% elif request.status == 'approved' %}border-success{% elif request.status == 'rejected' %}border-danger{% elif request.status == 'expired' %}border-secondary{% endif %}">
+                    
+                    <!-- Header con stato -->
+                    <div class="card-header {% if request.status == 'pending' %}bg-warning{% elif request.status == 'approved' %}bg-success text-white{% elif request.status == 'rejected' %}bg-danger text-white{% elif request.status == 'expired' %}bg-secondary text-white{% endif %}">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <h5 class="mb-1">
+                                    {% if request.status == 'pending' %}⏳{% elif request.status == 'approved' %}✅{% elif request.status == 'rejected' %}❌{% elif request.status == 'expired' %}⌛{% endif %}
+                                    {{ request.item.title }}
+                                </h5>
+                                <small>
+                                    Richiesta #{{ request.uuid.hex|slice:":8" }} • 
+                                    {{ request.created|date:"d/m/Y H:i" }}
+                                    {% if request.expires_at %}
+                                        • Scade: {{ request.expires_at|date:"d/m/Y H:i" }}
+                                    {% endif %}
+                                </small>
+                            </div>
+                            <div class="col-md-4 text-right">
+                                <span class="badge badge-{% if request.status == 'pending' %}warning{% elif request.status == 'approved' %}success{% elif request.status == 'rejected' %}danger{% else %}secondary{% endif %} badge-lg">
+                                    {{ request.get_status_display }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card-body">
+                        <div class="row">
+                            <!-- Dettagli acquirente -->
+                            <div class="col-md-4">
+                                <h6>🛒 Acquirente</h6>
+                                <p class="mb-1"><strong>{{ request.buyer.username }}</strong></p>
+                                <p class="mb-1">📧 {{ request.buyer.email }}</p>
+                                
+                                {% if request.buyer.seller_profile %}
+                                    <small class="text-muted">
+                                        {% if request.buyer.seller_profile.total_sales > 0 %}
+                                            ⭐ {{ request.buyer.seller_profile.average_rating|floatformat:1 }}/5
+                                            ({{ request.buyer.seller_profile.total_sales }} vendite)
+                                        {% else %}
+                                            👤 Nuovo utente
+                                        {% endif %}
+                                    </small>
+                                {% endif %}
+                            </div>
+                            
+                            <!-- Dettagli prodotto e consegna -->
+                            <div class="col-md-4">
+                                <h6>📦 Articolo e Consegna</h6>
+                                <p class="mb-1"><strong>💰 €{{ request.item.price }}</strong></p>
+                                <p class="mb-1">
+                                    🚚 {{ request.get_delivery_method_display }}
+                                </p>
+                                
+                                {% if request.shipping_address %}
+                                    <div class="alert alert-light p-2 mt-2">
+                                        <small><strong>📍 Indirizzo:</strong><br>{{ request.shipping_address }}</small>
+                                    </div>
+                                {% endif %}
+                            </div>
+                            
+                            <!-- Importi -->
+                            <div class="col-md-4">
+                                <h6>💳 Riepilogo Importi</h6>
+                                <div class="table-sm">
+                                    {% with fees=request.item.price|floatformat:2 %}
+                                        <small>
+                                            Prezzo: €{{ request.item.price }}<br>
+                                            + Commissioni: ~€{{ fees|add:"0"|floatformat:2 }}<br>
+                                            <strong>Totale acquirente: ~€{{ request.item.price|add:fees|floatformat:2 }}</strong><br>
+                                            <em class="text-muted">Netto a te: €{{ request.item.price }}</em>
+                                        </small>
+                                    {% endwith %}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Messaggio dell'acquirente -->
+                        {% if request.message %}
+                        <div class="row mt-3">
+                            <div class="col-md-12">
+                                <div class="alert alert-info">
+                                    <h6>💬 Messaggio dell'acquirente:</h6>
+                                    <p class="mb-0">{{ request.message|linebreaks }}</p>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                        
+                        <!-- Azioni disponibili -->
+                        <div class="row mt-3">
+                            <div class="col-md-12">
+                                {% if request.status == 'pending' and not request.is_expired %}
+                                    <div class="btn-group" role="group">
+                                        <form method="post" action="{% url 'payments:process_request' request.uuid 'approve' %}" style="display:inline;" 
+                                              onsubmit="return confirm('✅ Approvare questa richiesta di acquisto?\n\nL\'acquirente potrà procedere al pagamento.')">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-success">
+                                                ✅ Approva Richiesta
+                                            </button>
+                                        </form>
+                                        
+                                        <form method="post" action="{% url 'payments:process_request' request.uuid 'reject' %}" style="display:inline;"
+                                              onsubmit="return confirm('❌ Rifiutare questa richiesta di acquisto?\n\nL\'acquirente riceverà una notifica.')">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-outline-danger">
+                                                ❌ Rifiuta
+                                            </button>
+                                        </form>
+                                    </div>
+                                    
+                                {% elif request.status == 'approved' %}
+                                    <div class="alert alert-success">
+                                        <strong>✅ Richiesta Approvata</strong>
+                                        <p class="mb-1">L'acquirente può ora procedere al pagamento.</p>
+                                        {% if request.payment_transaction %}
+                                            <p class="mb-0">
+                                                <a href="{% url 'payments:request_detail' request.uuid %}" class="btn btn-sm btn-outline-success">
+                                                    👁️ Vedi Stato Pagamento
+                                                </a>
+                                            </p>
+                                        {% endif %}
+                                    </div>
+                                    
+                                {% elif request.status == 'rejected' %}
+                                    <div class="alert alert-danger">
+                                        <strong>❌ Richiesta Rifiutata</strong>
+                                    </div>
+                                    
+                                {% elif request.is_expired %}
+                                    <div class="alert alert-secondary">
+                                        <strong>⌛ Richiesta Scaduta</strong>
+                                        <p class="mb-0">Questa richiesta è scaduta automaticamente.</p>
+                                    </div>
+                                {% endif %}
+                                
+                                <!-- Link dettaglio -->
+                                <a href="{% url 'payments:request_detail' request.uuid %}" class="btn btn-outline-info btn-sm ml-2">
+                                    👁️ Vedi Dettagli Completi
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+                
+                <!-- Paginazione -->
+                {% if is_paginated %}
+                <nav aria-label="Paginazione richieste">
+                    <ul class="pagination justify-content-center">
+                        {% if page_obj.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page_obj.previous_page_number }}">&laquo; Precedente</a>
+                            </li>
+                        {% endif %}
+                        
+                        <li class="page-item active">
+                            <span class="page-link">Pagina {{ page_obj.number }} di {{ page_obj.paginator.num_pages }}</span>
+                        </li>
+                        
+                        {% if page_obj.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page_obj.next_page_number }}">Successiva &raquo;</a>
+                            </li>
+                        {% endif %}
+                    </ul>
+                </nav>
+                {% endif %}
+                
+            {% else %}
+                <!-- Nessuna richiesta -->
+                <div class="jumbotron text-center">
+                    <h4>📭 Nessuna Richiesta di Acquisto</h4>
+                    <p class="lead">Non hai ancora ricevuto richieste di acquisto per i tuoi annunci.</p>
+                    
+                    <hr class="my-4">
+                    
+                    <div class="row justify-content-center">
+                        <div class="col-md-8">
+                            <h6>💡 Suggerimenti per ricevere più richieste:</h6>
+                            <ul class="text-left">
+                                <li><strong>Prezzi competitivi:</strong> Confronta i tuoi prezzi con annunci simili</li>
+                                <li><strong>Foto di qualità:</strong> Aggiungi immagini chiare dei tuoi articoli</li>
+                                <li><strong>Descrizioni dettagliate:</strong> Spiega le condizioni del prodotto</li>
+                                <li><strong>Pagamenti online:</strong> Facilita gli acquisti abilitando Stripe</li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <a class="btn btn-primary btn-lg" href="{% url 'django_classified:user-items' %}" role="button">
+                        📝 Gestisci i Tuoi Annunci
+                    </a>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Script per funzionalità aggiuntive -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto-refresh per richieste pendenti
+    const pendingCount = {{ pending_count|default:0 }};
+    if (pendingCount > 0) {
+        // Refresh ogni 2 minuti se ci sono richieste pendenti
+        setTimeout(function() {
+            window.location.reload();
+        }, 120000);
+    }
+    
+    // Suoni di notifica (opzionale)
+    if (pendingCount > 0 && 'Notification' in window) {
+        // Chiedi permesso notifiche
+        Notification.requestPermission();
+    }
+});
+</script>
+{% endblock %}
+```
+
+
+### templates/payments/seller_setup.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n widget_tweaks %}
+
+{% block title %}Impostazioni Venditore{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 700px;">
+    <h3>⚙️ Impostazioni Venditore</h3>
+    
+    {% if is_new_seller %}
+        <div class="alert alert-info">
+            <h5>👋 Benvenuto come Venditore!</h5>
+            <p class="mb-0">Configura le tue preferenze per iniziare a vendere su NINVENDO.</p>
+        </div>
+    {% endif %}
+    
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h5>💰 Configurazione Vendite</h5>
+        </div>
+        <div class="card-body">
+            <form method="post">
+                {% csrf_token %}
+                
+                <!-- Accetta pagamenti -->
+                <div class="form-group">
+                    <div class="form-check">
+                        {{ form.accepts_payments|add_class:"form-check-input" }}
+                        <label class="form-check-label" for="{{ form.accepts_payments.id_for_label }}">
+                            <strong>💳 Accetta pagamenti online</strong>
+                        </label>
+                    </div>
+                    <small class="form-text text-muted">
+                        Permetti agli utenti di acquistare i tuoi annunci con carte di credito/debito tramite Stripe
+                    </small>
+                    {% if form.accepts_payments.errors %}
+                        <div class="text-danger">{{ form.accepts_payments.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <hr>
+
+                <!-- Auto-approvazione -->
+                <div class="form-group">
+                    <div class="form-check">
+                        {{ form.auto_accept_payments|add_class:"form-check-input" }}
+                        <label class="form-check-label" for="{{ form.auto_accept_payments.id_for_label }}">
+                            <strong>⚡ Approva automaticamente le richieste</strong>
+                        </label>
+                    </div>
+                    <small class="form-text text-muted">
+                        Le richieste di acquisto saranno approvate automaticamente senza la tua conferma manuale
+                    </small>
+                    <div class="alert alert-warning mt-2">
+                        <small>
+                            <strong>⚠️ Attenzione:</strong> Sconsigliato per articoli di valore elevato. 
+                            Con l'approvazione automatica gli acquirenti potranno procedere immediatamente al pagamento.
+                        </small>
+                    </div>
+                    {% if form.auto_accept_payments.errors %}
+                        <div class="text-danger">{{ form.auto_accept_payments.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <hr>
+
+                <!-- Commissioni info -->
+                <div class="alert alert-light">
+                    <h6>📊 Sistema Commissioni</h6>
+                    <p class="mb-2">Su ogni vendita vengono applicate automaticamente:</p>
+                    <ul class="mb-2">
+                        <li><strong>3% di commissione piattaforma NINVENDO</strong></li>
+                        <li><strong>1.4% + €0.25 di commissione Stripe</strong> (processore pagamenti)</li>
+                    </ul>
+                    <p class="mb-0 small text-muted">
+                        Le commissioni sono a carico dell'acquirente e vengono aggiunte automaticamente al prezzo finale.
+                        Tu riceverai esattamente l'importo pubblicato nel tuo annuncio.
+                    </p>
+                </div>
+
+                <!-- Pulsanti -->
+                <div class="text-center">
+                    <button type="submit" class="btn btn-success btn-lg">
+                        💾 Salva Configurazione
+                    </button>
+                    <a href="{% url 'django_classified:index' %}" class="btn btn-secondary btn-lg ml-2">
+                        ↩️ Torna alla Home
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistiche (se esistenti) -->
+    {% if profile.total_sales > 0 %}
+        <div class="card mt-4">
+            <div class="card-header bg-success text-white">
+                <h5>📈 Le Tue Statistiche</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-4">
+                        <h4 class="text-primary">{{ profile.total_sales }}</h4>
+                        <p class="text-muted">Rating Medio</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+
+    <!-- Link utili -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <h6>🔗 Link Utili</h6>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>📊 Gestione Vendite</h6>
+                    <ul class="list-unstyled">
+                        <li><a href="{% url 'payments:sales_history' %}">💸 Cronologia Vendite</a></li>
+                        <li><a href="{% url 'django_classified:user-items' %}">📝 I Miei Annunci</a></li>
+                        <li><a href="{% url 'django_classified:item-new' %}">➕ Nuovo Annuncio</a></li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h6>🔄 Sistema Scambi</h6>
+                    <ul class="list-unstyled">
+                        <li><a href="{% url 'trade:inbox' %}">📥 Scambi Ricevuti</a></li>
+                        <li><a href="{% url 'trade:sent' %}">📤 Scambi Inviati</a></li>
+                        <li><a href="{% url 'trade:profile' %}">👤 Profilo Scambi</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- FAQ -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <h6>❓ Domande Frequenti</h6>
+        </div>
+        <div class="card-body">
+            <div class="accordion" id="faqAccordion">
+                
+                <div class="card">
+                    <div class="card-header" id="faq1">
+                        <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#answer1">
+                            <strong>Come funzionano i pagamenti?</strong>
+                        </button>
+                    </div>
+                    <div id="answer1" class="collapse" data-parent="#faqAccordion">
+                        <div class="card-body">
+                            <p>I pagamenti sono gestiti tramite <strong>Stripe</strong>, uno dei sistemi più sicuri al mondo:</p>
+                            <ol>
+                                <li>L'acquirente invia una richiesta</li>
+                                <li>Tu approvi (manualmente o automaticamente)</li>
+                                <li>L'acquirente paga con carta di credito/debito</li>
+                                <li>Tu ricevi il pagamento direttamente sul tuo conto</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header" id="faq2">
+                        <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#answer2">
+                            <strong>Quando ricevo i soldi?</strong>
+                        </button>
+                    </div>
+                    <div id="answer2" class="collapse" data-parent="#faqAccordion">
+                        <div class="card-body">
+                            <p>I pagamenti vengono trasferiti automaticamente sul tuo conto corrente entro <strong>2-7 giorni lavorativi</strong> dal completamento della transazione, secondo le tempistiche standard di Stripe.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header" id="faq3">
+                        <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#answer3">
+                            <strong>Posso ancora fare scambi gratuiti?</strong>
+                        </button>
+                    </div>
+                    <div id="answer3" class="collapse" data-parent="#faqAccordion">
+                        <div class="card-body">
+                            <p><strong>Assolutamente sì!</strong> Il sistema di baratto rimane completamente gratuito e disponibile per tutti gli utenti, indipendentemente dalle impostazioni di pagamento.</p>
+                        </div>
+                    </div>
+                </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}="text-muted">Vendite Completate</p>
+                    </div>
+                    <div class="col-md-4">
+                        <h4 class="text-success">€{{ profile.total_revenue_euros|floatformat:2 }}</h4>
+                        <p class="text-muted">Ricavi Totali</p>
+                    </div>
+                    <div class="col-md-4">
+                        <h4 class="text-warning">{{ profile.average_rating|floatformat:1 }}⭐</h4>
+                        <p class
+```
+
+
+### templates/payments/template_seller_setup.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Impostazioni Vendite{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 800px;">
+    <h3>⚙️ Impostazioni Venditore</h3>
+    
+    <!-- Stato Configurazione -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h5>📊 Stato del Tuo Profilo Venditore</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>✅ Configurazione Base</h6>
+                            <p class="text-success mb-1">
+                                <strong>Account attivo</strong> - Puoi ricevere richieste di acquisto
+                            </p>
+                            <small class="text-muted">Profilo creato: {{ profile.created_at|date:"d/m/Y" }}</small>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>📈 Statistiche</h6>
+                            <p class="mb-1">
+                                <strong>{{ profile.total_sales }}</strong> vendite completate<br>
+                                <strong>€{{ profile.total_revenue_euros|floatformat:2 }}</strong> ricavi totali<br>
+                                <strong>⭐ {{ profile.average_rating|floatformat:1 }}/5</strong> rating medio
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Form Configurazione -->
+    <div class="card">
+        <div class="card-header">
+            <h5>🛠️ Configurazione</h5>
+        </div>
+        <div class="card-body">
+            <form method="post">
+                {% csrf_token %}
+                
+                <!-- Sistema Pagamenti -->
+                <div class="form-group">
+                    <div class="form-check">
+                        {{ form.accepts_payments }}
+                        <label class="form-check-label" for="{{ form.accepts_payments.id_for_label }}">
+                            <strong>{{ form.accepts_payments.label }}</strong>
+                        </label>
+                    </div>
+                    <small class="form-text text-muted">{{ form.accepts_payments.help_text }}</small>
+                    {% if form.accepts_payments.errors %}
+                        <div class="text-danger">{{ form.accepts_payments.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <div class="form-group">
+                    <div class="form-check">
+                        {{ form.auto_accept_payments }}
+                        <label class="form-check-label" for="{{ form.auto_accept_payments.id_for_label }}">
+                            <strong>{{ form.auto_accept_payments.label }}</strong>
+                        </label>
+                    </div>
+                    <small class="form-text text-muted">{{ form.auto_accept_payments.help_text }}</small>
+                    {% if form.auto_accept_payments.errors %}
+                        <div class="text-danger">{{ form.auto_accept_payments.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <!-- Informazioni Commissioni -->
+                <div class="alert alert-warning">
+                    <h6>💰 Schema Commissioni</h6>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p class="mb-1"><strong>Commissione Piattaforma:</strong></p>
+                            <p class="text-danger">3% del prezzo dell'articolo</p>
+                        </div>
+                        <div class="col-md-6">
+                            <p class="mb-1"><strong>Commissione Stripe:</strong></p>
+                            <p class="text-danger">1.4% + €0.25 per transazione</p>
+                        </div>
+                    </div>
+                    <hr>
+                    <h6>Esempio Calcolo:</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <tr>
+                                <td>Prezzo articolo</td>
+                                <td class="text-right">€50.00</td>
+                            </tr>
+                            <tr class="text-danger">
+                                <td>Commissione piattaforma (3%)</td>
+                                <td class="text-right">-€1.50</td>
+                            </tr>
+                            <tr class="text-danger">
+                                <td>Commissione Stripe (1.4% + €0.25)</td>
+                                <td class="text-right">-€0.95</td>
+                            </tr>
+                            <tr class="font-weight-bold">
+                                <td>Totale pagato dall'acquirente</td>
+                                <td class="text-right">€52.45</td>
+                            </tr>
+                            <tr class="text-success font-weight-bold">
+                                <td>Tu ricevi</td>
+                                <td class="text-right">€50.00</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <small class="text-muted">
+                        Le commissioni sono a carico dell'acquirente e vengono aggiunte al prezzo dell'articolo
+                    </small>
+                </div>
+
+                <!-- Come Funziona -->
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6>❓ Come Funziona il Sistema di Pagamenti</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>1. 📝 Richiesta di Acquisto</h6>
+                                <p class="small text-muted">L'acquirente invia una richiesta per il tuo annuncio con messaggio e dettagli di consegna</p>
+                                
+                                <h6>2. ✅ Approvazione</h6>
+                                <p class="small text-muted">Tu approvi o rifiuti la richiesta (automatico se abilitato)</p>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>3. 💳 Pagamento</h6>
+                                <p class="small text-muted">L'acquirente paga con carta tramite Stripe (sicuro e crittografato)</p>
+                                
+                                <h6>4. 📦 Consegna</h6>
+                                <p class="small text-muted">Spedisci l'articolo o organizza il ritiro secondo gli accordi</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stripe Setup (Solo per info, non funzionale senza account) -->
+                <div class="alert alert-info">
+                    <h6>🔧 Configurazione Stripe</h6>
+                    <p>
+                        <strong>Stato:</strong> 
+                        {% if profile.stripe_onboarding_completed %}
+                            <span class="text-success">✅ Completata</span>
+                        {% else %}
+                            <span class="text-warning">⚠️ Non configurata</span>
+                        {% endif %}
+                    </p>
+                    {% if not profile.stripe_onboarding_completed %}
+                        <p class="mb-2">Per ricevere pagamenti devi completare la configurazione Stripe:</p>
+                        <button type="button" class="btn btn-warning" disabled>
+                            🔗 Completa Configurazione Stripe (Demo Mode)
+                        </button>
+                        <br><small class="text-muted">In modalità demo - sarà attivato quando avrai un account Stripe reale</small>
+                    {% endif %}
+                </div>
+
+                <!-- Pulsanti Azione -->
+                <div class="text-center">
+                    <button type="submit" class="btn btn-success btn-lg">
+                        💾 Salva Configurazione
+                    </button>
+                    <a href="{% url 'django_classified:index' %}" class="btn btn-secondary btn-lg ml-2">
+                        🏠 Torna alla Home
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div
+```
+
+
+### templates/payments/transaction_detail.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Transazione #{{ transaction.uuid.hex|slice:":8" }}{% endblock %}
+
+{% block body %}
+<div class="container">
+    <div class="row">
+        <div class="col-md-12">
+            <h3>💳 Dettagli Transazione #{{ transaction.uuid.hex|slice:":8" }}</h3>
+            
+            <!-- Status della transazione -->
+            <div class="alert 
+                {% if transaction.status == 'pending' %}alert-warning
+                {% elif transaction.status == 'processing' %}alert-info
+                {% elif transaction.status == 'succeeded' %}alert-success
+                {% elif transaction.status == 'failed' %}alert-danger
+                {% elif transaction.status == 'cancelled' %}alert-secondary
+                {% elif transaction.status == 'refunded' %}alert-warning
+                {% endif %}">
+                <div class="row">
+                    <div class="col-md-8">
+                        <h4>
+                            {% if transaction.status == 'pending' %}⏳ In Attesa
+                            {% elif transaction.status == 'processing' %}🔄 In Elaborazione
+                            {% elif transaction.status == 'succeeded' %}✅ Completata
+                            {% elif transaction.status == 'failed' %}❌ Fallita
+                            {% elif transaction.status == 'cancelled' %}🚫 Annullata
+                            {% elif transaction.status == 'refunded' %}💸 Rimborsata
+                            {% endif %}
+                        </h4>
+                        <p class="mb-0">{{ transaction.get_status_display }}</p>
+                    </div>
+                    <div class="col-md-4 text-right">
+                        <p class="mb-1"><strong>Creata:</strong> {{ transaction.created_at|date:"d/m/Y H:i" }}</p>
+                        {% if transaction.completed_at %}
+                            <p class="mb-0"><strong>Completata:</strong> {{ transaction.completed_at|date:"d/m/Y H:i" }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="row">
+                <!-- Dettagli transazione -->
+                <div class="col-md-8">
+                    <!-- Informazioni articolo -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h5>🎮 Articolo Acquistato</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    {% if transaction.item.image_set.first %}
+                                        <img src="{{ transaction.item.image_set.first.file.url }}" 
+                                             alt="{{ transaction.item.title }}" 
+                                             class="img-fluid rounded">
+                                    {% else %}
+                                        <div class="bg-light p-3 text-center rounded">
+                                            <span class="text-muted">Nessuna immagine</span>
+                                        </div>
+                                    {% endif %}
+                                </div>
+                                <div class="col-md-9">
+                                    <h6>{{ transaction.item.title }}</h6>
+                                    <p class="text-muted">{{ transaction.item.description|truncatewords:20 }}</p>
+                                    <p>
+                                        <a href="{{ transaction.item.get_absolute_url }}" 
+                                           class="btn btn-outline-primary btn-sm">
+                                            👁️ Vedi Annuncio
+                                        </a>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Informazioni partecipanti -->
+                    <div class="row">
+                        <!-- Acquirente -->
+                        <div class="col-md-6">
+                            <div class="card mb-3 {% if is_buyer %}border-primary{% endif %}">
+                                <div class="card-header {% if is_buyer %}bg-primary text-white{% endif %}">
+                                    <h6>🛒 Acquirente</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>{{ transaction.buyer.username }}</strong>
+                                        {% if is_buyer %}<span class="badge badge-primary ml-2">Tu</span>{% endif %}
+                                    </p>
+                                    <p>📧 {{ transaction.buyer_email }}</p>
+                                    {% if transaction.buyer_name %}
+                                        <p>👤 {{ transaction.buyer_name }}</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Venditore -->
+                        <div class="col-md-6">
+                            <div class="card mb-3 {% if is_seller %}border-success{% endif %}">
+                                <div class="card-header {% if is_seller %}bg-success text-white{% endif %}">
+                                    <h6>🏪 Venditore</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>{{ transaction.seller.username }}</strong>
+                                        {% if is_seller %}<span class="badge badge-success ml-2">Tu</span>{% endif %}
+                                    </p>
+                                    {% if transaction.seller.seller_profile %}
+                                        <p>📊 {{ transaction.seller.seller_profile.total_sales }} vendite</p>
+                                        <p>⭐ {{ transaction.seller.seller_profile.average_rating|floatformat:1 }}/5</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Indirizzo di spedizione -->
+                    {% if transaction.shipping_address %}
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>📍 Indirizzo di Spedizione</h6>
+                        </div>
+                        <div class="card-body">
+                            <address>{{ transaction.shipping_address|linebreaks }}</address>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Note -->
+                    {% if transaction.notes %}
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>📝 Note</h6>
+                        </div>
+                        <div class="card-body">
+                            {{ transaction.notes|linebreaks }}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <!-- Sidebar - Importi e azioni -->
+                <div class="col-md-4">
+                    <!-- Riepilogo importi -->
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>💰 Riepilogo Importi</h6>
+                        </div>
+                        <div class="card-body">
+                            <table class="table table-sm">
+                                <tbody>
+                                    <tr>
+                                        <td>Prezzo articolo:</td>
+                                        <td class="text-right"><strong>€{{ transaction.item_price_euros }}</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Commissione piattaforma:</td>
+                                        <td class="text-right">€{{ transaction.platform_fee_euros }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Commissione Stripe:</td>
+                                        <td class="text-right">€{{ transaction.stripe_fee_euros }}</td>
+                                    </tr>
+                                    <tr class="table-success">
+                                        <td><strong>Totale pagato:</strong></td>
+                                        <td class="text-right"><strong>€{{ transaction.total_amount_euros }}</strong></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            
+                            {% if is_seller %}
+                                <div class="alert alert-info p-2">
+                                    <small>
+                                        <strong>💰 Il tuo ricavo:</strong><br>
+                                        €{{ transaction.item_price_euros }}
+                                        <br><em>(commissioni detratte automaticamente)</em>
+                                    </small>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <!-- Azioni disponibili -->
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6>⚡ Azioni</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if transaction.status == 'succeeded' %}
+                                <!-- Transazione completata -->
+                                <div class="alert alert-success p-2 mb-3">
+                                    <small><strong>✅ Pagamento completato con successo!</strong></small>
+                                </div>
+                                
+                                {% if is_buyer %}
+                                    <p><small>Il venditore è stato notificato del pagamento.</small></p>
+                                {% elif is_seller %}
+                                    <p><small>Organizza la consegna con l'acquirente.</small></p>
+                                {% endif %}
+                                
+                            {% elif transaction.status == 'pending' or transaction.status == 'processing' %}
+                                <!-- In attesa/elaborazione -->
+                                <div class="alert alert-warning p-2 mb-3">
+                                    <small><strong>⏳ Pagamento in elaborazione...</strong></small>
+                                </div>
+                                <p><small>La transazione verrà completata a breve.</small></p>
+                                
+                            {% elif transaction.status == 'failed' %}
+                                <!-- Fallita -->
+                                <div class="alert alert-danger p-2 mb-3">
+                                    <small><strong>❌ Pagamento fallito</strong></small>
+                                </div>
+                                {% if is_buyer %}
+                                    <p><small>Puoi riprovare o contattare il supporto.</small></p>
+                                {% endif %}
+                            {% endif %}
+                            
+                            <!-- Link alle cronologie -->
+                            {% if is_buyer %}
+                                <a href="{% url 'payments:purchase_history' %}" 
+                                   class="btn btn-outline-primary btn-sm btn-block">
+                                    📋 I Miei Acquisti
+                                </a>
+                            {% elif is_seller %}
+                                <a href="{% url 'payments:sales_history' %}" 
+                                   class="btn btn-outline-success btn-sm btn-block">
+                                    📋 Le Mie Vendite
+                                </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <!-- Link Stripe -->
+                    {% if transaction.stripe_payment_intent_id and is_seller %}
+                    <div class="card">
+                        <div class="card-body text-center">
+                            <small class="text-muted">
+                                ID Stripe: {{ transaction.stripe_payment_intent_id|slice:":20" }}...
+                            </small>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Auto-refresh per transazioni in corso -->
+{% if transaction.status == 'pending' or transaction.status == 'processing' %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Refresh ogni 30 secondi per transazioni in corso
+    setTimeout(function() {
+        window.location.reload();
+    }, 30000);
+});
+</script>
+{% endif %}
+{% endblock %}
+```
+
+
+### templates/registration/registration_complete.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Registrazione completata" %}{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width:500px; margin-top:30px;">
+  <h3>{% trans "Registrazione completata!" %}</h3>
+  <p>{% trans "Ora puoi accedere al tuo account con le credenziali scelte." %}</p>
+  <a href="{% url 'login' %}" class="btn btn-primary">{% trans "Vai al login" %}</a>
+</div>
+{% endblock %}
+```
+
+
+### templates/registration/registration_form.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Registrazione" %}{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width:500px; margin-top:30px;">
+  <h3>{% trans "Crea un nuovo account" %}</h3>
+
+  <form method="post" action="">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+
+    <div class="form-group">
+      <label for="id_username">{% trans "Username" %}</label>
+      {{ form.username }}
+      {{ form.username.errors }}
+    </div>
+
+    <div class="form-group">
+      <label for="id_email">{% trans "Email" %}</label>
+      {{ form.email }}
+      {{ form.email.errors }}
+    </div>
+
+    <div class="form-group">
+      <label for="id_password1">{% trans "Password" %}</label>
+      {{ form.password1 }}
+      {{ form.password1.errors }}
+    </div>
+
+    <div class="form-group">
+      <label for="id_password2">{% trans "Conferma password" %}</label>
+      {{ form.password2 }}
+      {{ form.password2.errors }}
+    </div>
+
+    <button type="submit" class="btn btn-success btn-block">{% trans "Registrati" %}</button>
+  </form>
+
+  <div style="margin-top:15px;">
+    <p>{% trans "Hai già un account?" %} <a href="{% url 'login' %}">{% trans "Accedi" %}</a></p>
+  </div>
+</div>
+{% endblock %}
+```
+
+
+### templates/trade/detail.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n widget_tweaks %}
+
+{% block title %}Dettagli Scambio #{{ trade.pk }}{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 900px;">
+    <h3>🔄 Scambio #{{ trade.pk }}</h3>
+    
+    <!-- Status -->
+    <div class="row mb-3">
+        <div class="col-md-12">
+            <div class="alert 
+                {% if trade.state == 'sent' %}alert-warning
+                {% elif trade.state == 'accepted' %}alert-success
+                {% elif trade.state == 'completed' %}alert-info
+                {% elif trade.state == 'declined' %}alert-danger
+                {% else %}alert-secondary{% endif %}">
+                <h4>
+                    {% if trade.state == 'sent' %}⏳ In Attesa di Risposta
+                    {% elif trade.state == 'accepted' %}✅ Scambio Accettato
+                    {% elif trade.state == 'completed' %}🎉 Scambio Completato
+                    {% elif trade.state == 'declined' %}❌ Scambio Rifiutato
+                    {% elif trade.state == 'cancelled' %}🚫 Scambio Annullato
+                    {% endif %}
+                </h4>
+                <p class="mb-0">Data: {{ trade.created_at|date:"d/m/Y H:i" }}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dettagli Scambio -->
+    <div class="row mb-4">
+        <!-- Annuncio Offerto -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5>📤 {{ trade.from_user.username }} Offre</h5>
+                </div>
+                <div class="card-body">
+                    {% if trade.offer_item.image_set.first %}
+                        <img src="{{ trade.offer_item.image_set.first.file.url }}" alt="{{ trade.offer_item.title }}" 
+                             class="img-fluid mb-3 rounded" style="max-height: 200px; width: 100%; object-fit: cover;">
+                    {% endif %}
+                    <h6><a href="{{ trade.offer_item.get_absolute_url }}" target="_blank">{{ trade.offer_item.title }}</a></h6>
+                    <p><strong>Prezzo:</strong> {{ trade.offer_item.price|floatformat:0 }}€</p>
+                    {% if trade.offer_item.description %}
+                        <p class="text-muted small">{{ trade.offer_item.description|truncatewords:15 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Annuncio Richiesto -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5>📥 {{ trade.to_user.username }} Riceve</h5>
+                </div>
+                <div class="card-body">
+                    {% if trade.want_item.image_set.first %}
+                        <img src="{{ trade.want_item.image_set.first.file.url }}" alt="{{ trade.want_item.title }}" 
+                             class="img-fluid mb-3 rounded" style="max-height: 200px; width: 100%; object-fit: cover;">
+                    {% endif %}
+                    <h6><a href="{{ trade.want_item.get_absolute_url }}" target="_blank">{{ trade.want_item.title }}</a></h6>
+                    <p><strong>Prezzo:</strong> {{ trade.want_item.price|floatformat:0 }}€</p>
+                    {% if trade.want_item.description %}
+                        <p class="text-muted small">{{ trade.want_item.description|truncatewords:15 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Messaggio Iniziale -->
+    {% if trade.message %}
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>💬 Messaggio di {{ trade.from_user.username }}</h5>
+                </div>
+                <div class="card-body">
+                    <p>{{ trade.message|linebreaks }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Azioni Scambio Pendente -->
+    {% if trade.state == 'sent' %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>⚡ Azioni Disponibili</h5>
+                    </div>
+                    <div class="card-body text-center">
+                        {% if user == trade.to_user %}
+                            <form method="post" action="{% url 'trade:action' trade.pk 'accept' %}" style="display:inline; margin-right: 10px;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success btn-lg"
+                                        onclick="return confirm('✅ Accettare questo scambio?')">
+                                    ✅ Accetta Scambio
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'trade:action' trade.pk 'decline' %}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-danger btn-lg"
+                                        onclick="return confirm('❌ Sei sicuro di rifiutare questo scambio?')">
+                                    ❌ Rifiuta
+                                </button>
+                            </form>
+                        {% elif user == trade.from_user %}
+                            <p class="text-muted">In attesa di risposta da {{ trade.to_user.username }}...</p>
+                            <form method="post" action="{% url 'trade:action' trade.pk 'cancel' %}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-warning"
+                                        onclick="return confirm('🚫 Annullare la proposta?')">
+                                    🚫 Annulla Proposta
+                                </button>
+                            </form>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    <!-- SEZIONE SCAMBIO ACCETTATO - COMUNICAZIONE INTERNA -->
+    {% elif trade.state == 'accepted' %}
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="alert alert-success">
+                    <h4>✅ Scambio Accettato!</h4>
+                    <p>Organizzate insieme il vostro scambio utilizzando la messaggistica qui sotto oppure i contatti diretti.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Informazioni di Contatto -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card border-primary">
+                    <div class="card-header bg-primary text-white">
+                        <h5>👤 {{ trade.from_user.username }} (Offerente)</h5>
+                    </div>
+                    <div class="card-body">
+                        {% if trade.from_user.trade_profile_extended %}
+                            {% if trade.from_user.trade_profile_extended.phone_number and trade.from_user.trade_profile_extended.show_phone_in_trades %}
+                                <p><strong>📞 Telefono:</strong> 
+                                    <a href="tel:{{ trade.from_user.trade_profile_extended.phone_number }}">
+                                        {{ trade.from_user.trade_profile_extended.phone_number }}
+                                    </a>
+                                </p>
+                            {% else %}
+                                <p class="text-muted">📞 Telefono: 
+                                    {% if not trade.from_user.trade_profile_extended.phone_number %}
+                                        Non impostato
+                                    {% else %}
+                                        Nascosto dall'utente
+                                    {% endif %}
+                                </p>
+                            {% endif %}
+                            
+                            {% if trade.from_user.trade_profile_extended.location %}
+                                <p><strong>📍 Zona:</strong> {{ trade.from_user.trade_profile_extended.location }}</p>
+                            {% else %}
+                                <p class="text-muted">📍 Zona: Non impostata</p>
+                            {% endif %}
+                        {% else %}
+                            <p class="text-muted">❌ Profilo non trovato</p>
+                        {% endif %}
+                        
+                        {% if trade.from_user.email %}
+                            <p><strong>✉️ Email:</strong> {{ trade.from_user.email }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card border-success">
+                    <div class="card-header bg-success text-white">
+                        <h5>👤 {{ trade.to_user.username }} (Ricevente)</h5>
+                    </div>
+                    <div class="card-body">
+                        {% if trade.to_user.trade_profile_extended %}
+                            {% if trade.to_user.trade_profile_extended.phone_number and trade.to_user.trade_profile_extended.show_phone_in_trades %}
+                                <p><strong>📞 Telefono:</strong> 
+                                    <a href="tel:{{ trade.to_user.trade_profile_extended.phone_number }}">
+                                        {{ trade.to_user.trade_profile_extended.phone_number }}
+                                    </a>
+                                </p>
+                            {% else %}
+                                <p class="text-muted">📞 Telefono: 
+                                    {% if not trade.to_user.trade_profile_extended.phone_number %}
+                                        Non impostato
+                                    {% else %}
+                                        Nascosto dall'utente
+                                    {% endif %}
+                                </p>
+                            {% endif %}
+                            
+                            {% if trade.to_user.trade_profile_extended.location %}
+                                <p><strong>📍 Zona:</strong> {{ trade.to_user.trade_profile_extended.location }}</p>
+                            {% else %}
+                                <p class="text-muted">📍 Zona: Non impostata</p>
+                            {% endif %}
+                        {% else %}
+                            <p class="text-muted">❌ Profilo non trovato</p>
+                        {% endif %}
+                        
+                        {% if trade.to_user.email %}
+                            <p><strong>✉️ Email:</strong> {{ trade.to_user.email }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Messaggistica Interna con Supporto Immagini -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h5>💬 Messaggistica Interna</h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Cronologia Messaggi con Immagini -->
+                        {% if trade_messages %}
+                            <div class="messages-history mb-3" style="max-height: 400px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; background-color: #f8f9fa;">
+                                {% for msg in trade_messages %}
+                                    <div class="message mb-3 {% if msg.sender == user %}text-right{% endif %}">
+                                        <div class="message-bubble {% if msg.sender == user %}alert-primary{% else %}alert-light{% endif %} alert py-2 px-3" 
+                                             style="display: inline-block; max-width: 80%; text-align: left;">
+                                            
+                                            <!-- Header del messaggio -->
+                                            <small class="text-muted">
+                                                <strong>{{ msg.sender.username }}</strong> - {{ msg.created_at|date:"d/m/Y H:i" }}
+                                            </small>
+                                            
+                                            <!-- Contenuto testuale -->
+                                            {% if msg.message %}
+                                                <div class="mt-1">{{ msg.message|linebreaks }}</div>
+                                            {% endif %}
+                                            
+                                            <!-- Immagine allegata -->
+                                            {% if msg.image %}
+                                                <div class="mt-2">
+                                                    <div class="image-container" style="position: relative;">
+                                                        <!-- Thumbnail cliccabile -->
+                                                        <img src="{% if msg.get_image_thumbnail_url %}{{ msg.get_image_thumbnail_url }}{% else %}{{ msg.image.url }}{% endif %}" 
+                                                             alt="Immagine allegata" 
+                                                             class="img-fluid rounded shadow-sm message-image"
+                                                             style="max-width: 100%; cursor: pointer; border: 2px solid #dee2e6;"
+                                                             onclick="openImageModal('{{ msg.image.url }}', '{{ msg.sender.username }}', '{{ msg.created_at|date:"d/m/Y H:i" }}')">
+                                                        
+                                                        <!-- Overlay con info -->
+                                                        <div class="image-overlay" style="position: absolute; bottom: 5px; right: 5px; background: rgba(0,0,0,0.7); color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.7em;">
+                                                            📷 Clicca per ingrandire
+                                                        </div>
+                                                        
+                                                        <!-- Dimensione file -->
+                                                        {% if msg.get_file_size_display %}
+                                                            <div class="file-size text-muted" style="font-size: 0.8em; margin-top: 5px;">
+                                                                📁 {{ msg.get_file_size_display }}
+                                                            </div>
+                                                        {% endif %}
+                                                    </div>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <p class="text-muted text-center">Nessun messaggio ancora. Inizia la conversazione qui sotto!</p>
+                        {% endif %}
+
+                        <!-- Form Nuovo Messaggio con Supporto Immagini -->
+                        {% if message_form %}
+                            <form method="post" action="{% url 'trade:send_message' trade.pk %}" enctype="multipart/form-data">
+                                {% csrf_token %}
+                                
+                                <div class="form-group">
+                                    <label for="id_message">💬 Scrivi un messaggio:</label>
+                                    {{ message_form.message|add_class:"form-control" }}
+                                    {% if message_form.message.errors %}
+                                        <div class="text-danger">{{ message_form.message.errors }}</div>
+                                    {% endif %}
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="id_image">📷 Allega Immagine (opzionale):</label>
+                                    {{ message_form.image|add_class:"form-control-file" }}
+                                    {% if message_form.image.errors %}
+                                        <div class="text-danger">{{ message_form.image.errors }}</div>
+                                    {% endif %}
+                                    <small class="form-text text-muted">Formati supportati: JPG, PNG, GIF (max 5MB)</small>
+
+<<TRUNCATED FILE: limited to 300 lines>>
+```
+
+
+### templates/trade/inbox.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Scambi Ricevuti{% endblock %}
+
+{% block body %}
+<div class="container">
+    <h3>📥 Scambi Ricevuti {% if pending_count %}<span class="badge badge-warning">{{ pending_count }}</span>{% endif %}</h3>
+    
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <a href="{% url 'trade:inbox' %}" class="btn btn-primary">📥 Ricevuti</a>
+            <a href="{% url 'trade:sent' %}" class="btn btn-outline-secondary">📤 Inviati</a>
+        </div>
+    </div>
+
+    {% if trades %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Da</th>
+                        <th>Offre</th>
+                        <th>Per</th>
+                        <th>Stato</th>
+                        <th>Data</th>
+                        <th>Azioni</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in trades %}
+                    <tr>
+                        <td>
+                            <strong>{{ trade.from_user.username }}</strong>
+                        </td>
+                        <td>
+                            <a href="{{ trade.offer_item.get_absolute_url }}">{{ trade.offer_item.title }}</a>
+                        </td>
+                        <td>
+                            <a href="{{ trade.want_item.get_absolute_url }}">{{ trade.want_item.title }}</a>
+                        </td>
+                        <td>
+                            {% if trade.state == 'sent' %}
+                                <span class="badge badge-warning">⏳ {{ trade.get_state_display }}</span>
+                            {% elif trade.state == 'accepted' %}
+                                <span class="badge badge-success">✅ {{ trade.get_state_display }}</span>
+                            {% elif trade.state == 'declined' %}
+                                <span class="badge badge-danger">❌ {{ trade.get_state_display }}</span>
+                            {% elif trade.state == 'completed' %}
+                                <span class="badge badge-info">🎉 {{ trade.get_state_display }}</span>
+                            {% else %}
+                                <span class="badge badge-secondary">{{ trade.get_state_display }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ trade.created_at|date:"d/m/Y" }}</td>
+                        <td>
+                            {% if trade.state == 'sent' %}
+                                <div class="btn-group btn-group-sm">
+                                    <form method="post" action="{% url 'trade:action' trade.pk 'accept' %}" style="display:inline;">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-success btn-sm"
+                                                onclick="return confirm('✅ Accettare questo scambio?')">
+                                            ✅ Accetta
+                                        </button>
+                                    </form>
+                                    <form method="post" action="{% url 'trade:action' trade.pk 'decline' %}" style="display:inline;">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-danger btn-sm"
+                                                onclick="return confirm('❌ Rifiutare questo scambio?')">
+                                            ❌ Rifiuta
+                                        </button>
+                                    </form>
+                                </div>
+                            {% elif trade.state == 'accepted' %}
+                                <form method="post" action="{% url 'trade:action' trade.pk 'complete' %}" style="display:inline;">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-primary btn-sm"
+                                            onclick="return confirm('🎉 Completare questo scambio?')">
+                                        🎉 Completa
+                                    </button>
+                                </form>
+                            {% endif %}
+                            
+                            {% if trade.message %}
+                                <button class="btn btn-info btn-sm" title="{{ trade.message }}" 
+                                        data-toggle="tooltip" data-placement="top">💬</button>
+                            {% endif %}
+                            
+                            <a href="{% url 'trade:detail' trade.pk %}" class="btn btn-secondary btn-sm">
+                                👁️ Dettagli
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if is_paginated %}
+        <div class="text-center">
+            <div class="pagination">
+                {% if page_obj.has_previous %}
+                    <a href="?page={{ page_obj.previous_page_number }}">&laquo; Precedente</a>
+                {% endif %}
+                
+                Pagina {{ page_obj.number }} di {{ page_obj.paginator.num_pages }}
+                
+                {% if page_obj.has_next %}
+                    <a href="?page={{ page_obj.next_page_number }}">Successiva &raquo;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+    {% else %}
+        <div class="alert alert-info">
+            <h4>📭 Nessuno Scambio Ricevuto</h4>
+            <p>Non hai ancora ricevuto proposte di scambio.</p>
+            <a href="{% url 'django_classified:index' %}" class="btn btn-primary">Esplora Annunci</a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+```
+
+
+### templates/trade/propose.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n widget_tweaks %}
+
+{% block title %}Proponi Scambio{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 800px;">
+    <h3>🔄 Proponi uno Scambio</h3>
+    
+    <!-- Annuncio target -->
+    <div class="card mb-4">
+        <div class="card-header bg-info text-white">
+            <h5>📝 Annuncio Richiesto</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3">
+                    {% if want_item.image %}
+                        <img src="{{ want_item.image.url }}" alt="{{ want_item.title }}" class="img-fluid rounded">
+                    {% else %}
+                        <div class="bg-light p-3 text-center rounded">Nessuna Immagine</div>
+                    {% endif %}
+                </div>
+                <div class="col-md-9">
+                    <h5>{{ want_item.title }}</h5>
+                    <p><strong>Proprietario:</strong> {{ want_item.user.username }}</p>
+                    <p><strong>Prezzo:</strong> {{ want_item.price }}{{ want_item.currency }}</p>
+                    {% if want_item.description %}
+                        <p class="text-muted">{{ want_item.description|truncatewords:20 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if not has_items %}
+        <!-- Nessun annuncio disponibile -->
+        <div class="alert alert-warning">
+            <h4>⚠️ Nessun Annuncio Disponibile</h4>
+            <p>Non hai annunci attivi da offrire per questo scambio.</p>
+            <a href="{% url 'django_classified:item-new' %}" class="btn btn-success">✨ Pubblica un Annuncio</a>
+            <a href="{{ want_item.get_absolute_url }}" class="btn btn-secondary">↩️ Torna all'Annuncio</a>
+        </div>
+    {% else %}
+        <!-- Form proposta -->
+        <form method="post">
+            {% csrf_token %}
+            
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>🎁 I Tuoi Annunci</h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="{{ form.offer_item.id_for_label }}">Seleziona cosa vuoi offrire:</label>
+                        {{ form.offer_item|add_class:"form-control form-control-lg" }}
+                        {% if form.offer_item.errors %}
+                            <div class="text-danger">{{ form.offer_item.errors }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>💬 Messaggio</h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="{{ form.message.id_for_label }}">Messaggio per {{ want_item.user.username }} (opzionale):</label>
+                        {{ form.message|add_class:"form-control" }}
+                        {% if form.message.errors %}
+                            <div class="text-danger">{{ form.message.errors }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottoni -->
+            <div class="text-center">
+                <button type="submit" class="btn btn-success btn-lg">
+                    📤 Invia Proposta di Scambio
+                </button>
+                <a href="{{ want_item.get_absolute_url }}" class="btn btn-secondary btn-lg">
+                    ❌ Annulla
+                </a>
+            </div>
+        </form>
+    {% endif %}
+</div>
+{% endblock %}
+```
+
+
+### templates/trade/sent.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n %}
+
+{% block title %}Scambi Inviati{% endblock %}
+
+{% block body %}
+<div class="container">
+    <h3>📤 Scambi Inviati</h3>
+    
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <a href="{% url 'trade:inbox' %}" class="btn btn-outline-secondary">📥 Ricevuti</a>
+            <a href="{% url 'trade:sent' %}" class="btn btn-primary">📤 Inviati</a>
+        </div>
+    </div>
+
+    {% if trades %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>A</th>
+                        <th>Ho Offerto</th>
+                        <th>Per</th>
+                        <th>Stato</th>
+                        <th>Data</th>
+                        <th>Azioni</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in trades %}
+                    <tr>
+                        <td><strong>{{ trade.to_user.username }}</strong></td>
+                        <td><a href="{{ trade.offer_item.get_absolute_url }}">{{ trade.offer_item.title }}</a></td>
+                        <td><a href="{{ trade.want_item.get_absolute_url }}">{{ trade.want_item.title }}</a></td>
+                        <td>
+                            {% if trade.state == 'sent' %}
+                                <span class="badge badge-warning">⏳ In Attesa</span>
+                            {% elif trade.state == 'accepted' %}
+                                <span class="badge badge-success">✅ Accettata</span>
+                            {% elif trade.state == 'declined' %}
+                                <span class="badge badge-danger">❌ Rifiutata</span>
+                            {% elif trade.state == 'completed' %}
+                                <span class="badge badge-info">🎉 Completata</span>
+                            {% elif trade.state == 'cancelled' %}
+                                <span class="badge badge-secondary">🚫 Annullata</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ trade.created_at|date:"d/m/Y" }}</td>
+                        <td>
+                            {% if trade.state == 'sent' or trade.state == 'accepted' %}
+                                <form method="post" action="{% url 'trade:action' trade.pk 'cancel' %}" style="display:inline;">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-warning btn-sm"
+                                            onclick="return confirm('🚫 Annullare questo scambio?')">
+                                        🚫 Annulla
+                                    </button>
+                                </form>
+                            {% endif %}
+                            
+                            {% if trade.state == 'accepted' %}
+                                <form method="post" action="{% url 'trade:action' trade.pk 'complete' %}" style="display:inline;">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-primary btn-sm"
+                                            onclick="return confirm('🎉 Completare questo scambio?')">
+                                        🎉 Completa
+                                    </button>
+                                </form>
+                            {% endif %}
+                            
+                            <a href="{% url 'trade:detail' trade.pk %}" class="btn btn-secondary btn-sm">
+                                👁️ Dettagli
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="alert alert-info">
+            <h4>📭 Nessuna Proposta Inviata</h4>
+            <p>Non hai ancora inviato proposte di scambio.</p>
+            <a href="{% url 'django_classified:index' %}" class="btn btn-primary">Cerca Annunci da Scambiare</a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+```
+
+
+### templates/trade/user_profile.html
+
+```html
+{% extends "django_classified/_base.html" %}
+{% load i18n widget_tweaks %}
+
+{% block title %}Il Mio Profilo{% endblock %}
+
+{% block body %}
+<div class="container" style="max-width: 700px;">
+    <h3>👤 Il Mio Profilo</h3>
+    
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h5>📝 Informazioni di Contatto</h5>
+        </div>
+        <div class="card-body">
+            <div class="alert alert-info">
+                <h6>ℹ️ Perché compilare queste informazioni?</h6>
+                <p class="mb-0">Queste informazioni saranno visibili <strong>solo agli utenti con cui hai scambi accettati</strong> per facilitare l'organizzazione dello scambio fisico.</p>
+            </div>
+            
+            <form method="post">
+                {% csrf_token %}
+                
+                <h6>📞 Contatto Telefonico</h6>
+                <div class="form-group">
+                    <label for="{{ form.phone_number.id_for_label }}">Numero di Telefono:</label>
+                    {{ form.phone_number|add_class:"form-control" }}
+                    {% if form.phone_number.errors %}
+                        <div class="text-danger">{{ form.phone_number.errors }}</div>
+                    {% endif %}
+                    <small class="form-text text-muted">Formato suggerito: +39 123 456 7890</small>
+                </div>
+
+                <div class="form-group form-check">
+                    {{ form.show_phone_in_trades|add_class:"form-check-input" }}
+                    <label class="form-check-label" for="{{ form.show_phone_in_trades.id_for_label }}">
+                        Mostra il mio numero di telefono negli scambi accettati
+                    </label>
+                    {% if form.show_phone_in_trades.errors %}
+                        <div class="text-danger">{{ form.show_phone_in_trades.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <hr>
+
+                <h6>📍 Localizzazione</h6>
+                <div class="form-group">
+                    <label for="{{ form.location.id_for_label }}">Città/Zona:</label>
+                    {{ form.location|add_class:"form-control" }}
+                    {% if form.location.errors %}
+                        <div class="text-danger">{{ form.location.errors }}</div>
+                    {% endif %}
+                    <small class="form-text text-muted">Es. Milano, Roma, Napoli, etc. Aiuta gli altri utenti a sapere se siete nella stessa zona</small>
+                </div>
+
+                <hr>
+
+                <div class="text-center">
+                    <button type="submit" class="btn btn-primary btn-lg">💾 Salva Profilo</button>
+                    <a href="{% url 'django_classified:index' %}" class="btn btn-secondary">❌ Annulla</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistiche Scambi -->
+    <div class="card mt-4">
+        <div class="card-header bg-success text-white">
+            <h5>📊 Le Mie Statistiche</h5>
+        </div>
+        <div class="card-body">
+            {% if user.trade_profile %}
+                <div class="row">
+                    <div class="col-md-4 text-center">
+                        <h4 class="text-primary">{{ user.trade_profile.total_trades_completed }}</h4>
+                        <p class="text-muted">Scambi Completati</p>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        <h4 class="text-warning">{{ user.trade_profile.average_rating|floatformat:1 }}/5 ⭐</h4>
+                        <p class="text-muted">Rating Medio</p>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        <h4 class="text-info">{{ user.trade_profile.total_feedbacks_received }}</h4>
+                        <p class="text-muted">Valutazioni Ricevute</p>
+                    </div>
+                </div>
+            {% else %}
+                <p class="text-muted text-center">Completa il tuo primo scambio per vedere le statistiche!</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Informazioni Attuali -->
+    {% if profile.phone_number or profile.location %}
+    <div class="card mt-4">
+        <div class="card-header bg-info text-white">
+            <h5>👁️ Anteprima delle Tue Informazioni</h5>
+        </div>
+        <div class="card-body">
+            <p class="text-muted">Ecco come vedranno le tue informazioni gli altri utenti negli scambi accettati:</p>
+            
+            <div class="card border-primary">
+                <div class="card-header bg-primary text-white">
+                    <h6>👤 {{ user.username }}</h6>
+                </div>
+                <div class="card-body">
+                    {% if profile.phone_number and profile.show_phone_in_trades %}
+                        <p><strong>📞 Telefono:</strong> {{ profile.phone_number }}</p>
+                    {% else %}
+                        <p class="text-muted">📞 Telefono: Non disponibile</p>
+                    {% endif %}
+                    
 
 <<TRUNCATED CONTEXT: limited to 5000 total lines>>
