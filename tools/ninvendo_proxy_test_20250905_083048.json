@@ -1,0 +1,32 @@
+{
+  "connectivity": {
+    "postgresql": false,
+    "postgresql_ssl": true,
+    "stunnel": true,
+    "ssh": true
+  },
+  "performance": {
+    "avg_latency": 37.4713659286499,
+    "min_latency": 32.61137008666992,
+    "max_latency": 58.72297286987305,
+    "success_rate": 1.0
+  },
+  "ssl": {
+    "connected": true,
+    "cipher": "TLS_AES_256_GCM_SHA384",
+    "ssl_version": "TLSv1.3",
+    "cert_info": {}
+  },
+  "postgresql_plain": {
+    "connected": false,
+    "error": "connection to server at \"100.108.112.117\", port 5432 failed: timeout expired\n"
+  },
+  "postgresql_ssl": {
+    "connected": false,
+    "error": "connection to server at \"100.108.112.117\", port 6543 failed: server closed the connection unexpectedly\n\tThis probably means the server terminated abnormally\n\tbefore or while processing the request.\n"
+  },
+  "firewall": {
+    "direct_blocked": true,
+    "proxy_works": true
+  }
+}
