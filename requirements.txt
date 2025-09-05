@@ -1,4 +1,3 @@
-
 boto3==1.35.92 
 django-classified==1.1.1
 django-environ==0.11.2
@@ -10,20 +9,30 @@ social-auth-app-django==5.4.2
 whitenoise==6.8.2
 django-fsm==3.0.0
 
-
 django-crispy-forms==2.1
 crispy-bootstrap4==2024.1
 django-widget-tweaks==1.5.0
 django-extensions==3.2.3
-
 
 django-notifications-hq==1.8.0  
 
 stripe==7.0.0
 
 # ============================================
-# CLOUDINARY SUPPORT - AGGIUNTO
+# CLOUDINARY SUPPORT
 # ============================================
 cloudinary==1.40.0
 django-cloudinary-storage==0.3.0
 pillow==10.4.0
+
+# ============================================
+# REGISTRATION SUPPORT - AGGIUNTO PER DOCKER
+# ============================================
+django-registration-redux==2.13
+
+# ============================================
+# UTILITIES FOR DOCKER/PRODUCTION
+# ============================================
+python-dotenv==1.0.1
+dj-database-url>=2.1.0
+redis>=4.5.0

@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    env_file:
+      - .env  # Carica tutte le variabili dal file .env
+    environment:
+      # Override specifici per Docker (sovrascrivono .env)
+      - DEBUG=True
+      - ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
+      # Valori di default per setup automatico
+      - SETUP_DEMO_DATA=false
+      - DJANGO_SUPERUSER_USERNAME=admin
+      - DJANGO_SUPERUSER_EMAIL=admin@ninvendo.com
+      - DJANGO_SUPERUSER_PASSWORD=admin123
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Redis per cache e sessions
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes  # Persistenza dati
+
+volumes:
+  static_volume:
+  media_volume:
+  redis_data:
